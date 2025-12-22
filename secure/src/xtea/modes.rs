@@ -11,3 +11,6 @@ pub type XteaCbcDec = cbc::Decryptor<crate::xtea::Xtea>;
 
 pub type XteaEcb = ecb::Encryptor<crate::xtea::Xtea>;
 pub type XteaEcbDec = ecb::Decryptor<crate::xtea::Xtea>;
+
+// Type alias for the XTEA CTR mode used for PS3 files
+pub type XteaPS3 = ctr::Ctr64BE<crate::xtea::Xtea>;

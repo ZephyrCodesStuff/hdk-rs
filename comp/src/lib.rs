@@ -1,2 +1,2 @@
-mod lzma;
+pub mod lzma;
 pub mod zlib;

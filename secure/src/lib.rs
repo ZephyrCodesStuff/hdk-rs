@@ -2,6 +2,7 @@
 
 pub mod blowfish;
 pub mod modes;
+pub mod reader;
 pub mod xtea;
 
 #[cfg(test)]

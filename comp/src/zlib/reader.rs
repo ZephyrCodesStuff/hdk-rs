@@ -1,6 +1,6 @@
-use std::io::{self, Read};
 use byteorder::{BigEndian, ReadBytesExt};
-use flate2::read::ZlibDecoder;
+use flate2::{Decompress, FlushDecompress, read::ZlibDecoder};
+use std::io::{self, Read};
 
 use super::EDGE_ZLIB_CHUNK_HEADER_SIZE;
 
@@ -23,10 +23,10 @@ impl<R: Read> SegmentedZlibReader<R> {
     /// Returns Ok(true) if a chunk was loaded, Ok(false) if EOF.
     fn load_next_chunk(&mut self) -> io::Result<bool> {
         let mut header = [0u8; EDGE_ZLIB_CHUNK_HEADER_SIZE];
-        
+
         // Try to read header
         match self.inner.read_exact(&mut header) {
-            Ok(()) => {},
+            Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(false),
             Err(e) => return Err(e),
         }
@@ -48,15 +48,9 @@ impl<R: Read> SegmentedZlibReader<R> {
         } else {
             // Compressed chunk
             self.current_chunk.reserve(src_size);
-            let mut decoder = ZlibDecoder::new(&chunk_data[..]);
+            let no_header = Decompress::new(false);
+            let mut decoder = ZlibDecoder::new_with_decompress(&chunk_data[..], no_header);
             decoder.read_to_end(&mut self.current_chunk)?;
-            
-            if self.current_chunk.len() != src_size {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Decompressed size mismatch: expected {}, got {}", src_size, self.current_chunk.len())
-                ));
-            }
         }
 
         Ok(true)

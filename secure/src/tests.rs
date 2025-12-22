@@ -321,7 +321,7 @@ mod blowfish_tests {
             let base = u64::from_be_bytes(iv);
             for i in 0..blocks {
                 let ctr = base.wrapping_add(i as u64);
-                let mut block = GenericArray::from(ctr.to_be_bytes());
+                let block = GenericArray::from(ctr.to_be_bytes());
                 // encrypt_block takes &mut GenericArray
                 let mut to_encrypt = block.clone();
                 cipher.encrypt_block(&mut to_encrypt);
@@ -336,7 +336,7 @@ mod blowfish_tests {
             let base = u64::from_le_bytes(iv);
             for i in 0..blocks {
                 let ctr = base.wrapping_add(i as u64);
-                let mut block = GenericArray::from(ctr.to_le_bytes());
+                let block = GenericArray::from(ctr.to_le_bytes());
                 let mut to_encrypt = block.clone();
                 cipher.encrypt_block(&mut to_encrypt);
                 out.extend_from_slice(to_encrypt.as_slice());

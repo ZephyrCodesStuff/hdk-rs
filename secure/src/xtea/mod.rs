@@ -1,4 +1,4 @@
-pub(crate) mod modes;
+pub mod modes;
 
 use byteorder::{ByteOrder, LE};
 use cipher::{
@@ -74,8 +74,6 @@ impl Xtea {
         let mut v0 = LE::read_u32(&block[0..4]);
         let mut v1 = LE::read_u32(&block[4..8]);
 
-        // Logic adapted from user's `block_decrypt` (which is actually encrypt)
-        // Hardcoded i=2, so j runs 0..2.
         let mut j = 0;
         while j < 2 {
             let j_idx = j as usize;

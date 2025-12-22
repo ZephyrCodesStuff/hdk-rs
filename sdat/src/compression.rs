@@ -438,7 +438,7 @@ pub fn get_decompressed_size(compressed_data: &[u8]) -> Result<usize, Compressio
 
 #[cfg(test)]
 mod tests {
-    use crate::METADATA_OFFSET;
+    use crate::block::METADATA_OFFSET;
 
     use super::*;
     use std::fs;

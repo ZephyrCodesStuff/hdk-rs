@@ -1,5 +1,5 @@
 use aes::Aes256;
-use aes::cipher::{KeyIvInit, StreamCipher};
+use aes::cipher::KeyIvInit;
 use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
 use ctr::Ctr128BE;
 use flate2::{Compression, write::ZlibEncoder};

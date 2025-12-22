@@ -1,9 +1,9 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 
+use crate::block::{BlockMetadata, DataBlockProcessor, METADATA_OFFSET};
 use crate::crypto::{EDAT_COMPRESSED_FLAG, EDAT_FLAG_0X20};
 use crate::error::SdatError;
 use crate::headers::{EdatHeader, NpdHeader};
-use crate::{BlockMetadata, DataBlockProcessor, METADATA_OFFSET};
 
 /// High-level, streaming(ish) SDAT reader.
 pub struct SdatReader<R: Read + Seek> {

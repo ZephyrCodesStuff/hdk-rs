@@ -1,8 +1,8 @@
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
+use crate::block::{DataBlockProcessor, METADATA_OFFSET};
 use crate::error::SdatError;
 use crate::headers::{EdatHeader, NpdHeader};
-use crate::{DataBlockProcessor, METADATA_OFFSET};
 
 /// High-level SDAT writer.
 ///

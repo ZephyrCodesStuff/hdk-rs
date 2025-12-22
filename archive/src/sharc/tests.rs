@@ -1,7 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use crate::structs::CompressionType;
-
     // #[test]
     // fn unpack_sharc() {
     //     // Read file data

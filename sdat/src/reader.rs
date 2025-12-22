@@ -6,9 +6,6 @@ use crate::headers::{EdatHeader, NpdHeader};
 use crate::{BlockMetadata, DataBlockProcessor, METADATA_OFFSET};
 
 /// High-level, streaming(ish) SDAT reader.
-///
-/// This is a more Rust-friendly API over the legacy `unpack_sdat` buffer-based function.
-/// It preserves the on-disk format and reuses the existing crypto/compression logic.
 pub struct SdatReader<R: Read + Seek> {
     inner: R,
     npd_header: NpdHeader,

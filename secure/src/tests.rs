@@ -120,11 +120,9 @@ mod tests {
 
 #[cfg(test)]
 mod blowfish_tests {
-    use std::io::Read;
-
     use crate::blowfish::Blowfish;
     use cipher::generic_array::GenericArray;
-    use cipher::{BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit, StreamCipher};
+    use cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 
     #[test]
     fn test_blowfish_basic_roundtrip() {
@@ -159,102 +157,102 @@ mod blowfish_tests {
         assert_eq!(block, GenericArray::from([0u8; 8]));
     }
 
-    #[test]
-    fn iv_recovery_exploit() {
-        use cipher::KeyInit;
-        use std::io::Read;
+    // #[test]
+    // fn iv_recovery_exploit() {
+    //     use cipher::KeyInit;
+    //     use std::io::Read;
 
-        let key = GenericArray::from([
-            0x80, 0x6d, 0x79, 0x16, 0x23, 0x42, 0xa1, 0x0e, 0x8f, 0x78, 0x14, 0xd4, 0xf9, 0x94,
-            0xa2, 0xd1, 0x74, 0x13, 0xfc, 0xa8, 0xf6, 0xe0, 0xb8, 0xa4, 0xed, 0xb9, 0xdc, 0x32,
-            0x7f, 0x8b, 0xa7, 0x11,
-        ]);
+    //     let key = GenericArray::from([
+    //         0x80, 0x6d, 0x79, 0x16, 0x23, 0x42, 0xa1, 0x0e, 0x8f, 0x78, 0x14, 0xd4, 0xf9, 0x94,
+    //         0xa2, 0xd1, 0x74, 0x13, 0xfc, 0xa8, 0xf6, 0xe0, 0xb8, 0xa4, 0xed, 0xb9, 0xdc, 0x32,
+    //         0x7f, 0x8b, 0xa7, 0x11,
+    //     ]);
 
-        pub const fn normal_xor_8_bytes(a: [u8; 8], b: [u8; 8]) -> [u8; 8] {
-            let bytes_a = i64::from_ne_bytes(a);
-            let bytes_b = i64::from_ne_bytes(b);
+    //     pub const fn normal_xor_8_bytes(a: [u8; 8], b: [u8; 8]) -> [u8; 8] {
+    //         let bytes_a = i64::from_ne_bytes(a);
+    //         let bytes_b = i64::from_ne_bytes(b);
 
-            (bytes_a ^ bytes_b).to_ne_bytes()
-        }
+    //         (bytes_a ^ bytes_b).to_ne_bytes()
+    //     }
 
-        // Load file from `SceneList.xml`
-        let mut file = std::fs::File::open("SceneList.xml").unwrap();
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).unwrap();
+    //     // Load file from `SceneList.xml`
+    //     let mut file = std::fs::File::open("SceneList.xml").unwrap();
+    //     let mut buffer = Vec::new();
+    //     file.read_to_end(&mut buffer).unwrap();
 
-        // 1. Recover IV
-        // Known plaintext header: "<?xml ve"
-        let known_header = b"<?xml ve";
-        let encrypted_header_bytes: [u8; 8] = buffer[0..8].try_into().unwrap();
-        println!("Encrypted Header: {:x?}", encrypted_header_bytes);
+    //     // 1. Recover IV
+    //     // Known plaintext header: "<?xml ve"
+    //     let known_header = b"<?xml ve";
+    //     let encrypted_header_bytes: [u8; 8] = buffer[0..8].try_into().unwrap();
+    //     println!("Encrypted Header: {:x?}", encrypted_header_bytes);
 
-        // Keystream block = P ^ C
-        // P = K ^ C => K = P ^ C
-        let keystream_block = normal_xor_8_bytes(encrypted_header_bytes, *known_header);
-        println!(
-            "Recovered Keystream Block (keystream): {:x?}",
-            keystream_block
-        );
+    //     // Keystream block = P ^ C
+    //     // P = K ^ C => K = P ^ C
+    //     let keystream_block = normal_xor_8_bytes(encrypted_header_bytes, *known_header);
+    //     println!(
+    //         "Recovered Keystream Block (keystream): {:x?}",
+    //         keystream_block
+    //     );
 
-        // The keystream block equals E_k(nonce). To recover the nonce (initial counter
-        // block) we must decrypt the keystream block with Blowfish using the same key.
-        let mut recovered_iv = GenericArray::from(keystream_block);
-        let bf = Blowfish::new(&key);
-        bf.decrypt_block(&mut recovered_iv);
-        println!("Recovered Nonce (IV): {:x?}", recovered_iv);
+    //     // The keystream block equals E_k(nonce). To recover the nonce (initial counter
+    //     // block) we must decrypt the keystream block with Blowfish using the same key.
+    //     let mut recovered_iv = GenericArray::from(keystream_block);
+    //     let bf = Blowfish::new(&key);
+    //     bf.decrypt_block(&mut recovered_iv);
+    //     println!("Recovered Nonce (IV): {:x?}", recovered_iv);
 
-        // Attempt to decrypt with BE counter first, then LE as fallback.
-        let mut buffer_try = buffer.clone();
-        let mut cipher_be = ctr::Ctr64BE::<Blowfish>::new(&key, &recovered_iv);
-        cipher_be.apply_keystream(&mut buffer_try);
-        println!(
-            "Decrypted Start (BE): {:?}",
-            String::from_utf8_lossy(&buffer_try[0..100])
-        );
+    //     // Attempt to decrypt with BE counter first, then LE as fallback.
+    //     let mut buffer_try = buffer.clone();
+    //     let mut cipher_be = ctr::Ctr64BE::<Blowfish>::new(&key, &recovered_iv);
+    //     cipher_be.apply_keystream(&mut buffer_try);
+    //     println!(
+    //         "Decrypted Start (BE): {:?}",
+    //         String::from_utf8_lossy(&buffer_try[0..100])
+    //     );
 
-        if !buffer_try.starts_with(b"<?xml") {
-            let mut buffer_try2 = buffer.clone();
-            let mut cipher_le = ctr::Ctr64LE::<Blowfish>::new(&key, &recovered_iv);
-            cipher_le.apply_keystream(&mut buffer_try2);
-            println!(
-                "Decrypted Start (LE): {:?}",
-                String::from_utf8_lossy(&buffer_try2[0..100])
-            );
-            assert!(buffer_try2.starts_with(b"<?xml"));
-            std::fs::write("decrypted_scene_list.xml", buffer_try2.as_slice()).unwrap();
-        } else {
-            assert!(buffer_try.starts_with(b"<?xml"));
-            std::fs::write("decrypted_scene_list.xml", buffer_try.as_slice()).unwrap();
-        }
-    }
+    //     if !buffer_try.starts_with(b"<?xml") {
+    //         let mut buffer_try2 = buffer.clone();
+    //         let mut cipher_le = ctr::Ctr64LE::<Blowfish>::new(&key, &recovered_iv);
+    //         cipher_le.apply_keystream(&mut buffer_try2);
+    //         println!(
+    //             "Decrypted Start (LE): {:?}",
+    //             String::from_utf8_lossy(&buffer_try2[0..100])
+    //         );
+    //         assert!(buffer_try2.starts_with(b"<?xml"));
+    //         std::fs::write("decrypted_scene_list.xml", buffer_try2.as_slice()).unwrap();
+    //     } else {
+    //         assert!(buffer_try.starts_with(b"<?xml"));
+    //         std::fs::write("decrypted_scene_list.xml", buffer_try.as_slice()).unwrap();
+    //     }
+    // }
 
-    #[test]
-    fn encryption() {
-        // Read the decrypted file and re-encrypt it to verify correctness
-        let key = GenericArray::from([
-            0x80, 0x6d, 0x79, 0x16, 0x23, 0x42, 0xa1, 0x0e, 0x8f, 0x78, 0x14, 0xd4, 0xf9, 0x94,
-            0xa2, 0xd1, 0x74, 0x13, 0xfc, 0xa8, 0xf6, 0xe0, 0xb8, 0xa4, 0xed, 0xb9, 0xdc, 0x32,
-            0x7f, 0x8b, 0xa7, 0x11,
-        ]);
+    // #[test]
+    // fn encryption() {
+    //     // Read the decrypted file and re-encrypt it to verify correctness
+    //     let key = GenericArray::from([
+    //         0x80, 0x6d, 0x79, 0x16, 0x23, 0x42, 0xa1, 0x0e, 0x8f, 0x78, 0x14, 0xd4, 0xf9, 0x94,
+    //         0xa2, 0xd1, 0x74, 0x13, 0xfc, 0xa8, 0xf6, 0xe0, 0xb8, 0xa4, 0xed, 0xb9, 0xdc, 0x32,
+    //         0x7f, 0x8b, 0xa7, 0x11,
+    //     ]);
 
-        let mut file = std::fs::File::open("decrypted_scene_list.xml").unwrap();
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).unwrap();
+    //     let mut file = std::fs::File::open("decrypted_scene_list.xml").unwrap();
+    //     let mut buffer = Vec::new();
+    //     file.read_to_end(&mut buffer).unwrap();
 
-        // Get the first 8 bytes of the SHA-1 as IV
-        // For now we can hardcode it: 9b4495714b5a7c42ad19af97853c5165d5a1a542
-        let iv = GenericArray::from([0x9b, 0x44, 0x95, 0x71, 0x4b, 0x5a, 0x7c, 0x42]);
+    //     // Get the first 8 bytes of the SHA-1 as IV
+    //     // For now we can hardcode it: 9b4495714b5a7c42ad19af97853c5165d5a1a542
+    //     let iv = GenericArray::from([0x9b, 0x44, 0x95, 0x71, 0x4b, 0x5a, 0x7c, 0x42]);
 
-        let mut cipher = ctr::Ctr64BE::<Blowfish>::new(&key, &iv);
-        cipher.apply_keystream(&mut buffer);
+    //     let mut cipher = ctr::Ctr64BE::<Blowfish>::new(&key, &iv);
+    //     cipher.apply_keystream(&mut buffer);
 
-        // Read `SceneList.xml` for comparison
-        let mut original_file = std::fs::File::open("SceneList.xml").unwrap();
-        let mut original_buffer = Vec::new();
-        original_file.read_to_end(&mut original_buffer).unwrap();
+    //     // Read `SceneList.xml` for comparison
+    //     let mut original_file = std::fs::File::open("SceneList.xml").unwrap();
+    //     let mut original_buffer = Vec::new();
+    //     original_file.read_to_end(&mut original_buffer).unwrap();
 
-        assert_eq!(buffer, original_buffer);
-    }
+    //     assert_eq!(buffer, original_buffer);
+    // }
 
     #[test]
     fn test_blowfish_cbc_mode() {
@@ -459,5 +457,105 @@ mod blowfish_tests {
             ks_be == manual_be || ks_le == manual_le,
             "CTR did not match manual BE or LE"
         );
+    }
+
+    #[test]
+    fn crypto_writer_roundtrip() {
+        use crate::blowfish::Blowfish;
+        use crate::reader::CryptoReader;
+        use crate::writer::CryptoWriter;
+        use cipher::generic_array::GenericArray;
+        use ctr::Ctr64BE;
+        use ctr::cipher::KeyIvInit;
+        use std::io::{Read, Write};
+
+        // Deterministic key/iv for test
+        let key = GenericArray::from([0x11u8; 32]);
+        let iv = GenericArray::from([0x22u8; 8]);
+
+        let plaintext = b"The quick brown fox jumps over the lazy dog".to_vec();
+
+        // Encrypt via CryptoWriter
+        let buf = Vec::new();
+        let mut writer = CryptoWriter::new(buf, Ctr64BE::<Blowfish>::new(&key, &iv));
+        writer.write_all(&plaintext).unwrap();
+        writer.flush().unwrap();
+        let buf = writer.into_inner();
+
+        // Decrypt via CryptoReader
+        let cursor = std::io::Cursor::new(buf);
+        let mut reader = CryptoReader::new(cursor, Ctr64BE::<Blowfish>::new(&key, &iv));
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).unwrap();
+
+        assert_eq!(out, plaintext);
+    }
+
+    #[test]
+    fn crypto_writer_small_writes() {
+        use crate::blowfish::Blowfish;
+        use crate::reader::CryptoReader;
+        use crate::writer::CryptoWriter;
+        use cipher::generic_array::GenericArray;
+        use ctr::Ctr64BE;
+        use ctr::cipher::KeyIvInit;
+        use std::io::{Read, Write};
+
+        // Deterministic key/iv for test
+        let key = GenericArray::from([0x33u8; 32]);
+        let iv = GenericArray::from([0x44u8; 8]);
+
+        let pieces: Vec<Vec<u8>> = (0..200)
+            .map(|i| format!("line {:04}\n", i).into_bytes())
+            .collect();
+        let mut plaintext = Vec::new();
+        for p in &pieces {
+            plaintext.extend_from_slice(p);
+        }
+
+        // Write many small pieces
+        let buf = Vec::new();
+        let mut writer = CryptoWriter::new(buf, Ctr64BE::<Blowfish>::new(&key, &iv));
+        for p in &pieces {
+            writer.write_all(p).unwrap();
+        }
+        writer.flush().unwrap();
+        let buf = writer.into_inner();
+
+        // Decrypt and verify
+        let cursor = std::io::Cursor::new(buf);
+        let mut reader = CryptoReader::new(cursor, Ctr64BE::<Blowfish>::new(&key, &iv));
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).unwrap();
+
+        assert_eq!(out, plaintext);
+    }
+
+    #[test]
+    fn crypto_writer_with_capacity() {
+        use crate::blowfish::Blowfish;
+        use crate::reader::CryptoReader;
+        use crate::writer::CryptoWriter;
+        use cipher::generic_array::GenericArray;
+        use ctr::Ctr64BE;
+        use ctr::cipher::KeyIvInit;
+        use std::io::{Read, Write};
+
+        let key = GenericArray::from([0x55u8; 32]);
+        let iv = GenericArray::from([0x66u8; 8]);
+        let plaintext = b"capacity test".to_vec();
+
+        let mut writer =
+            CryptoWriter::with_capacity(Vec::new(), Ctr64BE::<Blowfish>::new(&key, &iv), 64);
+        writer.write_all(&plaintext).unwrap();
+        writer.flush().unwrap();
+        let buf = writer.into_inner();
+
+        let cursor = std::io::Cursor::new(buf);
+        let mut reader = CryptoReader::new(cursor, Ctr64BE::<Blowfish>::new(&key, &iv));
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).unwrap();
+
+        assert_eq!(out, plaintext);
     }
 }

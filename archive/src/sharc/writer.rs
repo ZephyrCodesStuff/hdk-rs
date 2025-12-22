@@ -118,8 +118,13 @@ impl<W: Write> SharcWriter<W> {
             rng.fill_bytes(&mut iv);
 
             let key_ga = self.files_key.into();
-            let mut cipher = XteaPS3::new(&key_ga, iv.as_slice().into());
-            cipher.apply_keystream(&mut data);
+            // Use CryptoWriter so encryption is clearly expressed and reusable
+            let mut cw = secure::writer::CryptoWriter::new(
+                Vec::new(),
+                XteaPS3::new(&key_ga, iv.as_slice().into()),
+            );
+            cw.write_all(&data)?;
+            data = cw.into_inner();
         }
 
         let compressed_size = data.len() as u32;
@@ -193,10 +198,14 @@ impl<W: Write> SharcWriter<W> {
         }
         inner_buf.extend_from_slice(&self.files_key);
 
-        // Encrypt inner_buf with AES-256 CTR using iv
-        let mut cipher = Ctr128BE::<Aes256>::new(&self.key.into(), self.iv.as_slice().into());
-        cipher.apply_keystream(&mut inner_buf);
-        self.inner.write_all(&inner_buf)?;
+        // Encrypt inner_buf with AES-256 CTR using iv using CryptoWriter
+        let mut cw = secure::writer::CryptoWriter::new(
+            Vec::new(),
+            Ctr128BE::<Aes256>::new(&self.key.into(), self.iv.as_slice().into()),
+        );
+        cw.write_all(&inner_buf)?;
+        let enc_inner = cw.into_inner();
+        self.inner.write_all(&enc_inner)?;
 
         // 3) Build ToC (plain) then encrypt with iv+1
         let mut toc_buf: Vec<u8> = Vec::with_capacity(toc_size);
@@ -220,13 +229,17 @@ impl<W: Write> SharcWriter<W> {
             toc_buf.extend_from_slice(&e.iv);
         }
 
-        // Encrypt ToC with iv + 1
+        // Encrypt ToC with iv + 1 using CryptoWriter
         let mut iv_int = u128::from_be_bytes(self.iv);
         iv_int = iv_int.wrapping_add(1);
         let iv_inc = iv_int.to_be_bytes();
-        let mut toc_cipher = Ctr128BE::<Aes256>::new(&self.key.into(), &iv_inc.into());
-        toc_cipher.apply_keystream(&mut toc_buf);
-        self.inner.write_all(&toc_buf)?;
+        let mut toc_cw = secure::writer::CryptoWriter::new(
+            Vec::new(),
+            Ctr128BE::<Aes256>::new(&self.key.into(), &iv_inc.into()),
+        );
+        toc_cw.write_all(&toc_buf)?;
+        let enc_toc = toc_cw.into_inner();
+        self.inner.write_all(&enc_toc)?;
 
         // 4) Entries data + padding
         let mut rng = rand::rng();

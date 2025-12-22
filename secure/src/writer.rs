@@ -1,17 +1,34 @@
 use cipher::StreamCipher;
 use std::io::{self, Write};
 
+const DEFAULT_CAPACITY: usize = 4096;
+
 /// A writer that applies a stream cipher keystream to data before writing.
 pub struct CryptoWriter<W, C> {
     inner: W,
     cipher: C,
+    buf: Vec<u8>,
 }
 
 impl<W: Write, C: StreamCipher> CryptoWriter<W, C> {
     /// Create a new CryptoWriter wrapping `inner` and using `cipher` to
     /// transform bytes written through it.
+    ///
+    /// Uses a sensible default internal buffer capacity and delegates
+    /// to `with_capacity`.
     pub fn new(inner: W, cipher: C) -> Self {
-        Self { inner, cipher }
+        Self::with_capacity(inner, cipher, DEFAULT_CAPACITY)
+    }
+
+    /// Create a new CryptoWriter preallocating `initial_capacity` bytes for the
+    /// internal buffer. This can improve performance when the expected write
+    /// sizes are known in advance.
+    pub fn with_capacity(inner: W, cipher: C, initial_capacity: usize) -> Self {
+        Self {
+            inner,
+            cipher,
+            buf: Vec::with_capacity(initial_capacity),
+        }
     }
 
     /// Consume this writer and return the inner writer.
@@ -22,11 +39,16 @@ impl<W: Write, C: StreamCipher> CryptoWriter<W, C> {
 
 impl<W: Write, C: StreamCipher> Write for CryptoWriter<W, C> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // We can't safely mutate the caller's buffer in-place, so copy into a
-        // temporary buffer, apply keystream, then write it out.
-        let mut tmp = buf.to_vec();
-        self.cipher.apply_keystream(&mut tmp);
-        self.inner.write_all(&tmp)?;
+        // Reuse internal buffer to avoid per-write allocations.
+        self.buf.clear();
+        self.buf.reserve(buf.len());
+        self.buf.extend_from_slice(buf);
+
+        // Apply keystream in-place
+        self.cipher.apply_keystream(&mut self.buf);
+
+        // Write transformed data to inner writer
+        self.inner.write_all(&self.buf)?;
         Ok(buf.len())
     }
 

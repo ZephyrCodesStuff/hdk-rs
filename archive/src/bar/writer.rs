@@ -5,8 +5,9 @@ use std::io::{self, Cursor, Read, Seek, Write};
 
 use comp::zlib::writer::SegmentedZlibWriter;
 use ctr::Ctr64BE;
-use ctr::cipher::{KeyIvInit, StreamCipher};
+use ctr::cipher::KeyIvInit;
 use secure::blowfish::Blowfish;
+use secure::writer::CryptoWriter;
 
 use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType};
 
@@ -212,20 +213,25 @@ impl<W: Write + Seek> BarWriter<W> {
                     head.extend_from_slice(&[0u8; 4]);
                     head.extend_from_slice(&checksum);
 
-                    // Encrypt head with SIGNATURE_KEY
-                    let mut head_enc = head.clone();
-                    let mut bf_head = Ctr64BE::<Blowfish>::new(&SIGNATURE_KEY.into(), &iv.into());
-                    bf_head.apply_keystream(&mut head_enc);
+                    // Encrypt head with SIGNATURE_KEY using CryptoWriter
+                    let mut cw_head = CryptoWriter::new(
+                        Vec::new(),
+                        Ctr64BE::<Blowfish>::new(&SIGNATURE_KEY.into(), &iv.into()),
+                    );
+                    cw_head.write_all(&head)?;
+                    let head_enc = cw_head.into_inner();
 
-                    // Encrypt body with DEFAULT_KEY using IV + 3
+                    // Encrypt body with DEFAULT_KEY using IV + 3 via CryptoWriter
                     let mut iv_as_u64 = u64::from_be_bytes(iv);
                     iv_as_u64 = iv_as_u64.wrapping_add(3);
                     let iv_body = iv_as_u64.to_be_bytes();
 
-                    let mut body_enc = entry.data.clone(); // compressed body
-                    let mut bf_body =
-                        Ctr64BE::<Blowfish>::new(&DEFAULT_KEY.into(), &iv_body.into());
-                    bf_body.apply_keystream(&mut body_enc);
+                    let mut cw_body = CryptoWriter::new(
+                        Vec::new(),
+                        Ctr64BE::<Blowfish>::new(&DEFAULT_KEY.into(), &iv_body.into()),
+                    );
+                    cw_body.write_all(&entry.data)?;
+                    let body_enc = cw_body.into_inner();
 
                     // Body fourcc (4 bytes) - kept raw (zeros)
                     let body_fourcc = [0u8; 4];

@@ -133,11 +133,6 @@ impl<R: Read + Seek> BarReader<R> {
         let offset = entry.offset() as u64;
         let abs_offset = self.toc_base + offset;
 
-        println!(
-            "Reader Entry {}: offset={}, base={}, abs={}",
-            index, offset, self.toc_base, abs_offset
-        );
-
         self.inner.seek(SeekFrom::Start(abs_offset))?;
         let mut raw_data = vec![0u8; entry.compressed_size as usize];
         self.inner.read_exact(&mut raw_data)?;

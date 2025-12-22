@@ -539,7 +539,6 @@ mod tests {
             }
         } else {
             // Skip test if sample file is not available
-            println!("Skipping SDAT file test - sample file not found");
         }
     }
 
@@ -551,12 +550,8 @@ mod tests {
 
         // This should not panic, even if decompression fails
         let result = decompress(&input, &mut output);
-        // We don't assert success since this is minimal test data
-        // The important thing is that it doesn't panic or cause memory issues
-        match result {
-            Ok(_) => println!("Decompression succeeded"),
-            Err(e) => println!("Decompression failed as expected: {}", e),
-        }
+        // We don't assert success since this is minimal test data; just ensure it doesn't panic
+        let _ = result;
     }
 
     #[test]

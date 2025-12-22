@@ -48,7 +48,7 @@ Unlike legacy C tools, `hdk-rs` leverages Rust's type system and traits. Readers
 
 ## 📦 The Ecosystem
 
-`hdk-rs` is a mono-repository containing a collection of crates. You can use the main crate as a "kitchen sink" or install individual crates to keep your dependency tree minimal.
+`hdk-rs` is structured as a collection of scoped crates. You pick the individual crates you need for your specific needs.
 
 | Crate | Description |
 | :--- | :--- |

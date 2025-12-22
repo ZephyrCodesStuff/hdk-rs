@@ -1,7 +1,7 @@
 //! SDAT (System Data) file handling module
 //!
-//! This module provides functionality for unpacking and repacking PlayStation SDAT files.
-//! It is a Rust port of the SDAT-specific functionality from the make_npdata C library.
+//! This module provides functionality for unpacking and repacking `PlayStation` SDAT files.
+//! It is a Rust port of the SDAT-specific functionality from the `make_npdata` C library.
 
 pub mod compression;
 pub mod crypto;

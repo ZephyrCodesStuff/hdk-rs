@@ -12,7 +12,7 @@ pub fn aes_encrypt_cbc(key: &[u8; 32], iv: &[u8; 16], data: &mut [u8]) -> io::Re
     let encryptor = Aes256CbcEnc::new(key.into(), iv.into());
     encryptor
         .encrypt_padded_mut::<cbc::cipher::block_padding::NoPadding>(data, data.len())
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "cbc encrypt failed"))?;
+        .map_err(|_| io::Error::other("cbc encrypt failed"))?;
 
     Ok(())
 }
@@ -27,7 +27,7 @@ pub fn aes_decrypt_cbc(key: &[u8; 32], iv: &[u8; 16], data: &mut [u8]) -> io::Re
     let decryptor = Aes256CbcDec::new(key.into(), iv.into());
     decryptor
         .decrypt_padded_mut::<cbc::cipher::block_padding::NoPadding>(data)
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "cbc decrypt failed"))?;
+        .map_err(|_| io::Error::other("cbc decrypt failed"))?;
 
     Ok(())
 }

@@ -191,7 +191,7 @@ impl Blowfish {
     }
 
     #[inline]
-    fn round(&self, left: u32, right: u32, n: u32) -> u32 {
+    const fn round(&self, left: u32, right: u32, n: u32) -> u32 {
         let a0 = self.s[0][((right >> 24) & 0xFF) as usize];
         let a1 = self.s[1][((right >> 16) & 0xFF) as usize];
         let a2 = self.s[2][((right >> 8) & 0xFF) as usize];
@@ -235,10 +235,10 @@ impl KeyInit for Blowfish {
         for i in 0..18 {
             let key_len = key.len();
 
-            let d = (key[j % key_len] as u32) << 24
-                | (key[(j + 1) % key_len] as u32) << 16
-                | (key[(j + 2) % key_len] as u32) << 8
-                | (key[(j + 3) % key_len] as u32);
+            let d = u32::from(key[j % key_len]) << 24
+                | u32::from(key[(j + 1) % key_len]) << 16
+                | u32::from(key[(j + 2) % key_len]) << 8
+                | u32::from(key[(j + 3) % key_len]);
 
             bf.p[i] ^= d;
             j = (j + 4) % key_len;
@@ -290,7 +290,7 @@ impl BlockBackend for Blowfish {
 
 impl BlockEncrypt for Blowfish {
     fn encrypt_with_backend(&self, f: impl BlockClosure<BlockSize = Self::BlockSize>) {
-        f.call(&mut self.clone())
+        f.call(&mut self.clone());
     }
 }
 
@@ -320,6 +320,6 @@ impl BlockBackend for BlowfishDecBackend {
 
 impl BlockDecrypt for Blowfish {
     fn decrypt_with_backend(&self, f: impl BlockClosure<BlockSize = Self::BlockSize>) {
-        f.call(&mut BlowfishDecBackend(self.clone()))
+        f.call(&mut BlowfishDecBackend(self.clone()));
     }
 }

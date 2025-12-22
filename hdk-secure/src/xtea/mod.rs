@@ -26,7 +26,7 @@ pub struct Xtea {
 }
 
 impl Xtea {
-    fn process_sub_keys(&mut self, mut sum: i32, index: i32, lookup: bool) {
+    const fn process_sub_keys(&mut self, mut sum: i32, index: i32, lookup: bool) {
         if lookup {
             let mut j = 0;
             while j < (((ROUNDS as i32) & index) >> 3) {
@@ -255,7 +255,7 @@ impl BlockBackend for Xtea {
 
 impl BlockEncrypt for Xtea {
     fn encrypt_with_backend(&self, f: impl BlockClosure<BlockSize = Self::BlockSize>) {
-        f.call(&mut self.clone())
+        f.call(&mut self.clone());
     }
 }
 
@@ -283,6 +283,6 @@ impl BlockBackend for XteaDecBackend {
 
 impl BlockDecrypt for Xtea {
     fn decrypt_with_backend(&self, f: impl BlockClosure<BlockSize = Self::BlockSize>) {
-        f.call(&mut XteaDecBackend(self.clone()))
+        f.call(&mut XteaDecBackend(self.clone()));
     }
 }

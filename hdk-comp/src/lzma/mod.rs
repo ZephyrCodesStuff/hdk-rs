@@ -10,7 +10,7 @@ const HEADER_SIZE: usize = 16;
 const SEGMENT_SIZE: usize = u16::MAX as usize + 1;
 
 /// These parameters match the recommended ones by Sony in their
-/// internal EdgeLZMA samples.
+/// internal `EdgeLZMA` samples.
 ///
 /// They explicitly mention that in order to be able to decompress
 /// a file on the PS3's SPU, we must not exceed these limits.

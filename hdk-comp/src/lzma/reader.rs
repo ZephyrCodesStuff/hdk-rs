@@ -19,7 +19,7 @@ impl<R: Read + Seek> SegmentedLzmaReader<R> {
         // Validate Magic
         let mut magic = [0u8; 4];
         inner.read_exact(&mut magic)?;
-        if &magic != super::MAGIC {
+        if magic != super::MAGIC {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid magic"));
         }
 
@@ -39,7 +39,7 @@ impl<R: Read + Seek> SegmentedLzmaReader<R> {
             let offset = inner.read_i32::<BigEndian>()?;
 
             // Resolve the sentinel size
-            let u_size = if u_size == 0 { 65536 } else { u_size as u32 };
+            let u_size = if u_size == 0 { 65536 } else { u32::from(u_size) };
 
             // The final bit is used to indicate whether this segment is compressed or not.
             let final_offset = (offset & !1) as u64;

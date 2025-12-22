@@ -11,7 +11,7 @@ pub struct CryptoWriter<W, C> {
 }
 
 impl<W: Write, C: StreamCipher> CryptoWriter<W, C> {
-    /// Create a new CryptoWriter wrapping `inner` and using `cipher` to
+    /// Create a new `CryptoWriter` wrapping `inner` and using `cipher` to
     /// transform bytes written through it.
     ///
     /// Uses a sensible default internal buffer capacity and delegates
@@ -20,7 +20,7 @@ impl<W: Write, C: StreamCipher> CryptoWriter<W, C> {
         Self::with_capacity(inner, cipher, DEFAULT_CAPACITY)
     }
 
-    /// Create a new CryptoWriter preallocating `initial_capacity` bytes for the
+    /// Create a new `CryptoWriter` preallocating `initial_capacity` bytes for the
     /// internal buffer. This can improve performance when the expected write
     /// sizes are known in advance.
     pub fn with_capacity(inner: W, cipher: C, initial_capacity: usize) -> Self {

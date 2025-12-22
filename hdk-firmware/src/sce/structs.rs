@@ -27,7 +27,7 @@ impl SCEHeader {
         let se_hsize = reader.read_u64::<BigEndian>()?;
         let se_esize = reader.read_u64::<BigEndian>()?;
 
-        Ok(SCEHeader {
+        Ok(Self {
             magic,
             version,
             se_flags,
@@ -38,6 +38,7 @@ impl SCEHeader {
         })
     }
 
+    #[must_use] 
     pub fn check_magic(&self) -> bool {
         &self.magic.to_be_bytes() == SCE_MAGIC
     }
@@ -52,6 +53,7 @@ pub struct MetadataInfo {
 }
 
 impl MetadataInfo {
+    #[must_use] 
     pub fn load_from_bytes(data: &[u8]) -> Self {
         let mut key = [0u8; 16];
         let mut key_pad = [0u8; 16];
@@ -63,7 +65,7 @@ impl MetadataInfo {
         iv.copy_from_slice(&data[32..48]);
         iv_pad.copy_from_slice(&data[48..64]);
 
-        MetadataInfo {
+        Self {
             key,
             key_pad,
             iv,
@@ -94,7 +96,7 @@ impl MetadataHeader {
         let unknown2 = cursor.read_u32::<BigEndian>()?;
         let unknown3 = cursor.read_u32::<BigEndian>()?;
 
-        Ok(MetadataHeader {
+        Ok(Self {
             signature_input_length,
             unknown1,
             section_count,
@@ -134,7 +136,7 @@ impl MetadataSectionHeader {
         let iv_idx = cursor.read_u32::<BigEndian>()?;
         let compressed = cursor.read_u32::<BigEndian>()?;
 
-        Ok(MetadataSectionHeader {
+        Ok(Self {
             data_offset,
             data_size,
             data_type,

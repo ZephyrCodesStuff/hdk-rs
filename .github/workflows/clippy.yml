@@ -32,4 +32,4 @@ jobs:
 
       - name: Run cargo clippy (deny warnings + pedantic + nursery)
         run: |
-          cargo clippy --all-targets --all-features -- -D warnings -D clippy::pedantic -D clippy::nursery -A clippy::multiple_crate_versions -A clippy::cast_sign_loss -A clippy::cast_possible_truncation -D missing_docs_in_private_items -F unused_imports
+          cargo clippy --all-targets --all-features -- -D warnings -D clippy::pedantic -D clippy::nursery -A clippy::multiple_crate_versions -F unused_imports

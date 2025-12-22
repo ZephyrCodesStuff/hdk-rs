@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod xtea_tests {
     use cipher::generic_array::GenericArray;
     use cipher::{BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit};
 
@@ -10,7 +10,7 @@ mod tests {
 
         let mut block = GenericArray::from([0u8; 8]);
         cipher.encrypt_block(&mut block);
-        let encrypted = block.clone(); // Not cloning this will simply create a reference
+        let encrypted = block; // Not cloning this will simply create a reference
 
         // Decrypt
         cipher.decrypt_block(&mut block);
@@ -36,7 +36,7 @@ mod tests {
 
         let mut block = GenericArray::from([0u8; 8]);
         block.copy_from_slice(&plaintext[0..8]);
-        let original = block.clone();
+        let original = block;
 
         cipher.encrypt_block(&mut block);
         assert_ne!(block, original);
@@ -82,7 +82,7 @@ mod tests {
         // CBC test: encrypt and then decrypt by manual block processing
         let plaintext = b"Hello, CBC World! Needs padding.";
         let mut padded = plaintext.to_vec();
-        while padded.len() % 8 != 0 {
+        while !padded.len().is_multiple_of(8) {
             padded.push(0);
         }
 
@@ -134,7 +134,7 @@ mod blowfish_tests {
         let cipher = Blowfish::new(&key);
 
         let original_block = GenericArray::from([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]);
-        let mut block = original_block.clone();
+        let mut block = original_block;
 
         cipher.encrypt_block(&mut block);
         assert_ne!(block, original_block);
@@ -173,7 +173,7 @@ mod blowfish_tests {
         let plaintext = b"Hello, CBC World! This needs to be padded...";
         // Manual padding to multiple of 8
         let mut padded = plaintext.to_vec();
-        while padded.len() % 8 != 0 {
+        while !padded.len().is_multiple_of(8) {
             padded.push(0);
         }
 
@@ -217,7 +217,7 @@ mod blowfish_tests {
                 let ctr = base.wrapping_add(i as u64);
                 let block = GenericArray::from(ctr.to_be_bytes());
                 // encrypt_block takes &mut GenericArray
-                let mut to_encrypt = block.clone();
+                let mut to_encrypt = block;
                 cipher.encrypt_block(&mut to_encrypt);
                 out.extend_from_slice(to_encrypt.as_slice());
             }
@@ -231,7 +231,7 @@ mod blowfish_tests {
             for i in 0..blocks {
                 let ctr = base.wrapping_add(i as u64);
                 let block = GenericArray::from(ctr.to_le_bytes());
-                let mut to_encrypt = block.clone();
+                let mut to_encrypt = block;
                 cipher.encrypt_block(&mut to_encrypt);
                 out.extend_from_slice(to_encrypt.as_slice());
             }
@@ -311,7 +311,7 @@ mod blowfish_tests {
             for i in 0..blocks {
                 let ctr = base.wrapping_add(i as u64);
                 let block = GenericArray::from(ctr.to_be_bytes());
-                let mut to_encrypt = block.clone();
+                let mut to_encrypt = block;
                 cipher.encrypt_block(&mut to_encrypt);
                 out.extend_from_slice(to_encrypt.as_slice());
             }
@@ -324,7 +324,7 @@ mod blowfish_tests {
             for i in 0..blocks {
                 let ctr = base.wrapping_add(i as u64);
                 let block = GenericArray::from(ctr.to_le_bytes());
-                let mut to_encrypt = block.clone();
+                let mut to_encrypt = block;
                 cipher.encrypt_block(&mut to_encrypt);
                 out.extend_from_slice(to_encrypt.as_slice());
             }
@@ -403,7 +403,7 @@ mod blowfish_tests {
         let iv = GenericArray::from([0x44u8; 8]);
 
         let pieces: Vec<Vec<u8>> = (0..200)
-            .map(|i| format!("line {:04}\n", i).into_bytes())
+            .map(|i| format!("line {i:04}\n").into_bytes())
             .collect();
         let mut plaintext = Vec::new();
         for p in &pieces {

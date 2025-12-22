@@ -10,6 +10,7 @@ pub struct MemoryBuffer {
 
 impl MemoryBuffer {
     /// Create a new memory buffer with specified capacity
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
             data: Vec::with_capacity(capacity),
@@ -18,6 +19,7 @@ impl MemoryBuffer {
     }
 
     /// Create a memory buffer from existing slice
+    #[must_use]
     pub fn from_slice(data: &[u8]) -> Self {
         Self {
             data: data.to_vec(),
@@ -26,6 +28,10 @@ impl MemoryBuffer {
     }
 
     /// Read data from buffer into provided slice
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if attempting to read beyond the buffer size.
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, MemoryError> {
         let available = self.data.len().saturating_sub(self.position);
         let to_read = buf.len().min(available);
@@ -41,6 +47,10 @@ impl MemoryBuffer {
     }
 
     /// Write data from slice into buffer
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if writing exceeds buffer capacity.
     pub fn write(&mut self, buf: &[u8]) -> Result<usize, MemoryError> {
         // Ensure we have enough capacity
         let required_size = self.position + buf.len();
@@ -55,7 +65,11 @@ impl MemoryBuffer {
     }
 
     /// Seek to specific position in buffer
-    pub fn seek(&mut self, pos: usize) -> Result<(), MemoryError> {
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the position is out of bounds.
+    pub const fn seek(&mut self, pos: usize) -> Result<(), MemoryError> {
         if pos > self.data.len() {
             return Err(MemoryError::InvalidSeekPosition { position: pos });
         }
@@ -65,21 +79,25 @@ impl MemoryBuffer {
     }
 
     /// Get current position in buffer
-    pub fn position(&self) -> usize {
+    #[must_use]
+    pub const fn position(&self) -> usize {
         self.position
     }
 
     /// Get total size of buffer
-    pub fn size(&self) -> usize {
+    #[must_use]
+    pub const fn size(&self) -> usize {
         self.data.len()
     }
 
     /// Get remaining bytes from current position
-    pub fn remaining(&self) -> usize {
+    #[must_use]
+    pub const fn remaining(&self) -> usize {
         self.data.len().saturating_sub(self.position)
     }
 
     /// Get reference to underlying data
+    #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
@@ -90,7 +108,11 @@ impl MemoryBuffer {
     }
 
     /// Check bounds for read/write operations
-    pub fn check_bounds(&self, offset: usize, length: usize) -> Result<(), MemoryError> {
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the specified range exceeds buffer size.
+    pub const fn check_bounds(&self, offset: usize, length: usize) -> Result<(), MemoryError> {
         if offset.saturating_add(length) > self.data.len() {
             return Err(MemoryError::BufferOverflow {
                 position: offset + length,

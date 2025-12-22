@@ -2,7 +2,7 @@
 
 use crate::error::{MemoryError, SdatError};
 
-/// NPD (PlayStation Data) header structure
+/// NPD (`PlayStation` Data) header structure
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct NpdHeader {
@@ -84,7 +84,7 @@ impl NpdHeader {
             buffer[127],
         ]);
 
-        Ok(NpdHeader {
+        Ok(Self {
             magic,
             version,
             license,
@@ -117,6 +117,7 @@ impl NpdHeader {
     /// # Returns
     ///
     /// Returns a Content ID string suitable for SDAT files in the format "XXYYYY-AAAABBBBB_CC-DDDDDDDDDDDDDDDD"
+    #[must_use] 
     pub fn generate_content_id() -> String {
         let prefix = "BLAHAJ";
 
@@ -143,10 +144,11 @@ impl NpdHeader {
 
     /// Get region code from system locale (LANG environment variable)
     #[cfg(feature = "metadata")]
+    #[must_use] 
     pub fn region_from_locale() -> String {
         std::env::var("LANG")
             .ok()
-            .and_then(|l| l.get(0..2).map(|s| s.to_uppercase()))
+            .and_then(|l| l.get(0..2).map(str::to_uppercase))
             .unwrap_or_else(|| "XX".to_string())
     }
 
@@ -160,7 +162,8 @@ impl NpdHeader {
     ///
     /// # Returns
     ///
-    /// Returns a new NpdHeader configured for SDAT files
+    /// Returns a new `NpdHeader` configured for SDAT files
+    #[must_use] 
     pub fn new_sdat(content_id: [u8; 0x30], dev_hash: [u8; 16], title_hash: [u8; 16]) -> Self {
         // Generate a random digest (C implementation uses prng)
         // For now, we'll use a fixed random-like pattern to avoid adding rand dependency if not needed
@@ -170,7 +173,7 @@ impl NpdHeader {
             digest[i] = (i as u8).wrapping_mul(17).wrapping_add(0x42);
         }
 
-        NpdHeader {
+        Self {
             magic: Self::MAGIC,
             version: 4, // Use version 4 for SDAT files
             license: 1, // Standard license type
@@ -235,7 +238,7 @@ impl EdatHeader {
             buffer[15],
         ]);
 
-        Ok(EdatHeader {
+        Ok(Self {
             flags,
             block_size,
             file_size,
@@ -243,7 +246,8 @@ impl EdatHeader {
     }
 
     /// Check if this is an SDAT file based on flags
-    pub fn is_sdat(&self) -> bool {
+    #[must_use] 
+    pub const fn is_sdat(&self) -> bool {
         (self.flags & Self::SDAT_FLAG) != 0
     }
 
@@ -257,15 +261,16 @@ impl EdatHeader {
     ///
     /// # Returns
     ///
-    /// Returns a new EdatHeader configured for SDAT files
-    pub fn new_sdat(file_size: u64, block_size: u32, compressed: bool) -> Self {
+    /// Returns a new `EdatHeader` configured for SDAT files
+    #[must_use] 
+    pub const fn new_sdat(file_size: u64, block_size: u32, compressed: bool) -> Self {
         let mut flags = Self::SDAT_FLAG;
 
         if compressed {
             flags |= crate::crypto::EDAT_COMPRESSED_FLAG;
         }
 
-        EdatHeader {
+        Self {
             flags,
             block_size,
             file_size,

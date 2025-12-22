@@ -45,7 +45,7 @@ impl<R: Read + Seek> SdatReader<R> {
 
         let block_num = edat_header
             .file_size
-            .div_ceil(edat_header.block_size as u64) as usize;
+            .div_ceil(u64::from(edat_header.block_size)) as usize;
 
         let metadata_section_size = if (edat_header.flags & EDAT_COMPRESSED_FLAG) != 0
             || (edat_header.flags & EDAT_FLAG_0X20) != 0
@@ -66,23 +66,23 @@ impl<R: Read + Seek> SdatReader<R> {
         })
     }
 
-    pub fn npd_header(&self) -> &NpdHeader {
+    pub const fn npd_header(&self) -> &NpdHeader {
         &self.npd_header
     }
 
-    pub fn edat_header(&self) -> &EdatHeader {
+    pub const fn edat_header(&self) -> &EdatHeader {
         &self.edat_header
     }
 
-    pub fn file_size(&self) -> u64 {
+    pub const fn file_size(&self) -> u64 {
         self.edat_header.file_size
     }
 
-    pub fn block_size(&self) -> u32 {
+    pub const fn block_size(&self) -> u32 {
         self.edat_header.block_size
     }
 
-    pub fn block_count(&self) -> usize {
+    pub const fn block_count(&self) -> usize {
         self.block_num
     }
 
@@ -138,7 +138,7 @@ impl<R: Read + Seek> SdatReader<R> {
             })
         } else if (self.edat_header.flags & EDAT_FLAG_0X20) != 0 {
             // FLAG 0x20: metadata is interleaved before each block.
-            let block_size = self.edat_header.block_size as u64;
+            let block_size = u64::from(self.edat_header.block_size);
             let stride = 0x20u64 + block_size;
             let block_base = (block_index as u64) * stride;
 
@@ -157,9 +157,10 @@ impl<R: Read + Seek> SdatReader<R> {
                 && !self
                     .edat_header
                     .file_size
-                    .is_multiple_of(self.edat_header.block_size as u64)
+                    .is_multiple_of(u64::from(self.edat_header.block_size))
             {
-                length = (self.edat_header.file_size % self.edat_header.block_size as u64) as u32;
+                length =
+                    (self.edat_header.file_size % u64::from(self.edat_header.block_size)) as u32;
             }
 
             Ok(BlockMetadata {
@@ -176,7 +177,7 @@ impl<R: Read + Seek> SdatReader<R> {
             self.read_exact_at(entry_off, &mut hash)?;
 
             let offset = metadata_offset
-                + (block_index as u64) * (self.edat_header.block_size as u64)
+                + (block_index as u64) * u64::from(self.edat_header.block_size)
                 + (self.block_num as u64) * (self.metadata_section_size as u64);
 
             let mut length = self.edat_header.block_size;
@@ -184,9 +185,10 @@ impl<R: Read + Seek> SdatReader<R> {
                 && !self
                     .edat_header
                     .file_size
-                    .is_multiple_of(self.edat_header.block_size as u64)
+                    .is_multiple_of(u64::from(self.edat_header.block_size))
             {
-                length = (self.edat_header.file_size % self.edat_header.block_size as u64) as u32;
+                length =
+                    (self.edat_header.file_size % u64::from(self.edat_header.block_size)) as u32;
             }
 
             Ok(BlockMetadata {
@@ -201,6 +203,11 @@ impl<R: Read + Seek> SdatReader<R> {
     /// Decrypt (and decompress, if needed) the SDAT payload into `out`.
     ///
     /// Returns the number of plaintext bytes written.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if decryption or decompression fails,
+    /// or if writing to `out` fails.
     pub fn decrypt_to_writer<W: Write>(&mut self, mut out: W) -> Result<u64, SdatError> {
         let mut total_written: u64 = 0;
 
@@ -230,17 +237,20 @@ impl<R: Read + Seek> SdatReader<R> {
                     .map_err(|e| SdatError::InvalidHeader(format!("Write failed: {e}")))?;
                 total_written += n as u64;
                 break;
-            } else {
-                out.write_all(&dec)
-                    .map_err(|e| SdatError::InvalidHeader(format!("Write failed: {e}")))?;
-                total_written += dec.len() as u64;
             }
+            out.write_all(&dec)
+                .map_err(|e| SdatError::InvalidHeader(format!("Write failed: {e}")))?;
+            total_written += dec.len() as u64;
         }
 
         Ok(total_written)
     }
 
     /// Convenience helper: decrypt into a Vec.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if decryption fails.
     pub fn decrypt_to_vec(&mut self) -> Result<Vec<u8>, SdatError> {
         let mut buf = Vec::with_capacity(self.edat_header.file_size as usize);
         self.decrypt_to_writer(&mut buf)?;

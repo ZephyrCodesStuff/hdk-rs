@@ -32,7 +32,8 @@ pub struct DataBlockProcessor {
 
 impl DataBlockProcessor {
     /// Create a new data block processor
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             crypto_ctx: CryptoContext::new(),
         }
@@ -40,8 +41,9 @@ impl DataBlockProcessor {
 
     /// Decrypt metadata section for compressed SDAT files
     ///
-    /// This function implements the dec_section logic from the C code
-    pub fn decrypt_metadata_section(&self, metadata: &[u8; 32]) -> [u8; 16] {
+    /// This function implements the `dec_section` logic from the C code
+    #[must_use]
+    pub const fn decrypt_metadata_section(&self, metadata: &[u8; 32]) -> [u8; 16] {
         let mut dec = [0u8; 16];
 
         // XOR operations as per the C implementation
@@ -66,6 +68,11 @@ impl DataBlockProcessor {
     }
 
     /// Parse block metadata from the metadata section
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the metadata buffer is insufficient
+    /// for the requested block index.
     pub fn parse_block_metadata(
         &self,
         metadata_buffer: &[u8],
@@ -156,7 +163,7 @@ impl DataBlockProcessor {
         } else if (edat_header.flags & EDAT_FLAG_0X20) != 0 {
             // FLAG 0x20: metadata precedes each data block
             // Calculate where this block's metadata is located
-            let block_size = edat_header.block_size as u64;
+            let block_size = u64::from(edat_header.block_size);
             let metadata_and_data_size = metadata_section_size as u64 + block_size;
             let block_metadata_offset = (block_index as u64) * metadata_and_data_size;
 
@@ -186,9 +193,9 @@ impl DataBlockProcessor {
             if block_index == (block_num - 1)
                 && !edat_header
                     .file_size
-                    .is_multiple_of(edat_header.block_size as u64)
+                    .is_multiple_of(u64::from(edat_header.block_size))
             {
-                length = (edat_header.file_size % edat_header.block_size as u64) as u32;
+                length = (edat_header.file_size % u64::from(edat_header.block_size)) as u32;
             }
 
             Ok(BlockMetadata {
@@ -209,7 +216,7 @@ impl DataBlockProcessor {
 
             let hash = metadata_buffer[metadata_start..metadata_start + 0x10].to_vec();
             let offset = metadata_offset
-                + (block_index as u64) * edat_header.block_size as u64
+                + (block_index as u64) * u64::from(edat_header.block_size)
                 + (block_num as u64) * (metadata_section_size as u64);
             let mut length = edat_header.block_size;
 
@@ -217,9 +224,9 @@ impl DataBlockProcessor {
             if block_index == (block_num - 1)
                 && !edat_header
                     .file_size
-                    .is_multiple_of(edat_header.block_size as u64)
+                    .is_multiple_of(u64::from(edat_header.block_size))
             {
-                length = (edat_header.file_size % edat_header.block_size as u64) as u32;
+                length = (edat_header.file_size % u64::from(edat_header.block_size)) as u32;
             }
 
             Ok(BlockMetadata {
@@ -232,6 +239,10 @@ impl DataBlockProcessor {
     }
 
     /// Decrypt a single data block
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if decryption fails.
     pub fn decrypt_data_block(
         &self,
         encrypted_data: &[u8],
@@ -319,7 +330,7 @@ impl DataBlockProcessor {
             let hash_valid = self.decrypt_and_verify(
                 hash_mode,
                 crypto_mode,
-                (npd_header.version == 4) as u32,
+                u32::from(npd_header.version == 4),
                 &encrypted_data[..length],
                 &mut decrypted_data,
                 &key_result,
@@ -346,6 +357,10 @@ impl DataBlockProcessor {
     }
 
     /// Encrypt a single data block
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if encryption fails.
     pub fn encrypt_data_block(
         &self,
         plaintext_data: &[u8],
@@ -437,7 +452,7 @@ impl DataBlockProcessor {
             self.encrypt_and_hash(
                 hash_mode,
                 crypto_mode,
-                (npd_header.version == 4) as u32,
+                u32::from(npd_header.version == 4),
                 &padded_data,
                 &mut encrypted_data,
                 &key_result,

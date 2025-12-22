@@ -9,6 +9,7 @@ pub const PUP_MAGIC: &[u8; 8] = b"SCEUF\0\0\0";
 pub struct PupMagic(pub [u8; 8]);
 
 impl PupMagic {
+    #[must_use] 
     pub fn is_valid(&self) -> bool {
         &self.0 == PUP_MAGIC
     }

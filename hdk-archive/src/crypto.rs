@@ -17,7 +17,8 @@ pub const SIGNATURE_KEY: [u8; 32] = [
 /// The algorithm matches the reader behaviour used to parse existing BAR files
 /// and encodes uncompressed size, compressed size, offset and timestamp into
 /// a single 64-bit value that is then returned in big-endian byte order.
-pub fn forge_iv(
+#[must_use] 
+pub const fn forge_iv(
     num_files: u64,
     uncomp_size: u64,
     comp_size: u64,

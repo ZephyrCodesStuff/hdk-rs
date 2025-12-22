@@ -29,7 +29,7 @@ impl<R: Read + Seek> SharcReader<R> {
         let magic_val = reader.read_le::<u32>().map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Failed to read magic: {}", e),
+                format!("Failed to read magic: {e}"),
             )
         })?;
 
@@ -48,7 +48,7 @@ impl<R: Read + Seek> SharcReader<R> {
         let preamble: SharcPreamble = reader.read_type(endian).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Failed to read SharcPreamble: {}", e),
+                format!("Failed to read SharcPreamble: {e}"),
             )
         })?;
 
@@ -67,7 +67,7 @@ impl<R: Read + Seek> SharcReader<R> {
         let inner: SharcInnerHeader = cursor.read_type(endian).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Failed to read SharcInnerHeader: {}", e),
+                format!("Failed to read SharcInnerHeader: {e}"),
             )
         })?;
 
@@ -92,7 +92,7 @@ impl<R: Read + Seek> SharcReader<R> {
             .map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("Failed to read SharcEntry ToC: {}", e),
+                    format!("Failed to read SharcEntry ToC: {e}"),
                 )
             })?;
 
@@ -123,11 +123,11 @@ impl<R: Read + Seek> SharcReader<R> {
     }
 
     /// Number of entries in the archive.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.entries.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
@@ -150,7 +150,7 @@ impl<R: Read + Seek> SharcReader<R> {
             .get(index)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Invalid entry index"))?;
 
-        SharcEntryMetadata::try_from(entry).map_err(|_| {
+        SharcEntryMetadata::try_from(entry).map_err(|()| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Invalid entry IV length (expected 8 bytes)",
@@ -163,7 +163,7 @@ impl<R: Read + Seek> SharcReader<R> {
     /// Items are `io::Result<_>` because malformed IV lengths are possible.
     pub fn entries_metadata(&self) -> impl Iterator<Item = io::Result<SharcEntryMetadata>> + '_ {
         self.entries.iter().map(|e| {
-            SharcEntryMetadata::try_from(e).map_err(|_| {
+            SharcEntryMetadata::try_from(e).map_err(|()| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Invalid entry IV length (expected 8 bytes)",
@@ -189,7 +189,7 @@ impl<R: Read + Seek> SharcReader<R> {
         let start_offset = self.data_start_offset + entry.offset();
         self.inner.seek(SeekFrom::Start(start_offset))?;
 
-        let raw_stream = (&mut self.inner).take(entry.compressed_size as u64);
+        let raw_stream = (&mut self.inner).take(u64::from(entry.compressed_size));
 
         let comp_type = CompressionType::try_from(entry.compression()).map_err(|_| {
             io::Error::new(
@@ -230,7 +230,7 @@ impl<R: Read + Seek> SharcReader<R> {
             }
 
             // No compression
-            _ => Ok(Box::new(raw_stream)),
+            CompressionType::None => Ok(Box::new(raw_stream)),
         }
     }
 }

@@ -15,6 +15,10 @@ pub struct SdatWriter {
 
 impl SdatWriter {
     /// Create a new writer configuration.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the provided output filename is empty.
     pub fn new(output_file_name: impl Into<String>) -> Result<Self, SdatError> {
         let output_file_name = output_file_name.into();
         if output_file_name.is_empty() {
@@ -27,6 +31,10 @@ impl SdatWriter {
     }
 
     /// Repack plaintext bytes into an SDAT container, returning the full SDAT file bytes.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if repacking to SDAT fails.
     pub fn write_to_vec(&self, input: &[u8]) -> Result<Vec<u8>, SdatError> {
         let mut out = Cursor::new(Vec::<u8>::new());
         let mut in_cur = Cursor::new(input);
@@ -39,6 +47,11 @@ impl SdatWriter {
     }
 
     /// Convenience helper: read all plaintext from `reader`, then repack to SDAT.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if reading from `reader` fails,
+    /// or if repacking to SDAT fails.
     pub fn write_from_reader_to_vec(&self, mut reader: impl Read) -> Result<Vec<u8>, SdatError> {
         let mut input = Vec::new();
         reader
@@ -62,6 +75,11 @@ pub struct SdatStreamWriter<W: Write + Seek> {
 }
 
 impl<W: Write + Seek> SdatStreamWriter<W> {
+    /// Create a new streaming SDAT writer.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the provided output filename is empty.
     pub fn new(inner: W, output_file_name: impl Into<String>) -> Result<Self, SdatError> {
         let output_file_name = output_file_name.into();
         if output_file_name.is_empty() {
@@ -80,12 +98,17 @@ impl<W: Write + Seek> SdatStreamWriter<W> {
     /// Override the block size (defaults to 0x8000).
     ///
     /// This is intentionally minimal: the reader already supports arbitrary block sizes.
-    pub fn with_block_size(mut self, block_size: u32) -> Self {
+    pub const fn with_block_size(mut self, block_size: u32) -> Self {
         self.block_size = block_size;
         self
     }
 
     /// Stream plaintext from a seekable reader, encrypt it into SDAT, and return the output + bytes written.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if reading from `input` fails,
+    /// or if writing to the underlying output fails.
     pub fn write_from_reader_seekable(
         mut self,
         input: &mut (impl Read + Seek),
@@ -122,14 +145,14 @@ impl<W: Write + Seek> SdatStreamWriter<W> {
         npd_header.dev_hash = dev_hash;
         npd_header.serialize(&mut npd_bytes)?;
 
-        let edat_header = EdatHeader::new_sdat(file_size as u64, self.block_size, false);
+        let edat_header = EdatHeader::new_sdat(file_size, self.block_size, false);
         let mut edat_bytes = vec![0u8; EdatHeader::SIZE];
         edat_header.serialize(&mut edat_bytes)?;
 
         let crypt_key = crate::crypto::generate_sdat_key(&npd_header.dev_hash);
 
         // 2) Layout sizing
-        let block_num = (file_size as u64).div_ceil(self.block_size as u64) as usize;
+        let block_num = file_size.div_ceil(u64::from(self.block_size)) as usize;
         let metadata_section_size: usize = 0x10;
         let metadata_size = block_num * metadata_section_size;
         let data_start = METADATA_OFFSET as u64 + metadata_size as u64;
@@ -146,7 +169,7 @@ impl<W: Write + Seek> SdatStreamWriter<W> {
             .map_err(|e| SdatError::InvalidHeader(format!("Failed to write EDAT header: {e}")))?;
 
         // Zero-fill up to METADATA_OFFSET (0x100). This includes the future hash/signature area.
-        let pos = self.inner.seek(SeekFrom::Current(0)).map_err(|e| {
+        let pos = self.inner.stream_position().map_err(|e| {
             SdatError::InvalidHeader(format!("Failed to query output position: {e}"))
         })?;
         if pos > METADATA_OFFSET as u64 {
@@ -180,8 +203,9 @@ impl<W: Write + Seek> SdatStreamWriter<W> {
         let mut data_pos = data_start;
 
         for block_index in 0..block_num {
-            let remaining =
-                file_size.saturating_sub((block_index as u64) * (self.block_size as u64)) as usize;
+            let remaining = file_size
+                .saturating_sub((block_index as u64) * u64::from(self.block_size))
+                as usize;
             let to_read = remaining.min(self.block_size as usize);
             let mut plain = vec![0u8; to_read];
             input.read_exact(&mut plain).map_err(|e| {

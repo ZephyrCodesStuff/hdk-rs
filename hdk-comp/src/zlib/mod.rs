@@ -4,4 +4,5 @@ pub const EDGE_ZLIB_CHUNK_HEADER_SIZE: usize = 4;
 pub mod reader;
 pub mod writer;
 
+#[cfg(test)]
 mod tests;

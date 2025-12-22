@@ -11,7 +11,7 @@ pub struct SegmentedZlibReader<R: Read> {
 }
 
 impl<R: Read> SegmentedZlibReader<R> {
-    pub fn new(inner: R) -> Self {
+    pub const fn new(inner: R) -> Self {
         Self {
             inner,
             current_chunk: Vec::new(),
@@ -59,11 +59,10 @@ impl<R: Read> SegmentedZlibReader<R> {
 
 impl<R: Read> Read for SegmentedZlibReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.current_chunk.is_empty() || self.cursor >= self.current_chunk.len() {
-            if !self.load_next_chunk()? {
+        if (self.current_chunk.is_empty() || self.cursor >= self.current_chunk.len())
+            && !self.load_next_chunk()? {
                 return Ok(0); // EOF
             }
-        }
 
         let available = self.current_chunk.len() - self.cursor;
         let to_read = std::cmp::min(available, buf.len());

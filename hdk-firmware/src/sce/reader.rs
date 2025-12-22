@@ -28,7 +28,7 @@ impl<R: Read + Seek> SceArchive<R> {
             return Err(SceError::InvalidMagic);
         }
 
-        Ok(SceArchive {
+        Ok(Self {
             inner: reader,
             header,
             meta_info: None,
@@ -39,7 +39,7 @@ impl<R: Read + Seek> SceArchive<R> {
         })
     }
 
-    pub fn header(&self) -> &crate::sce::structs::SCEHeader {
+    pub const fn header(&self) -> &crate::sce::structs::SCEHeader {
         &self.header
     }
 
@@ -148,7 +148,7 @@ impl<R: Read + Seek> SceArchive<R> {
             .get(index)
             .ok_or(SceError::SectionIndex)?;
 
-        let start = sh.data_offset as u64;
+        let start = sh.data_offset;
         let end = sh
             .data_offset
             .checked_add(sh.data_size)
@@ -158,7 +158,7 @@ impl<R: Read + Seek> SceArchive<R> {
         }
 
         self.inner.seek(std::io::SeekFrom::Start(start))?;
-        let take = (&mut self.inner).take(sh.data_size as u64);
+        let take = (&mut self.inner).take(sh.data_size);
 
         let mut reader: Box<dyn Read + 'a> = if sh.encrypted == 3 {
             let key_idx = sh.key_idx as usize;

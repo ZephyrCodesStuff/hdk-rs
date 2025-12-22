@@ -24,7 +24,7 @@ impl<W: Write> SegmentedLzmaWriter<W> {
         }
     }
 
-    /// Flushes the current raw_buffer into a compressed segment
+    /// Flushes the current `raw_buffer` into a compressed segment
     fn compress_current_chunk(&mut self) -> io::Result<()> {
         if self.raw_buffer.is_empty() {
             return Ok(());

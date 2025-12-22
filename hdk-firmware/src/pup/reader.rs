@@ -95,8 +95,8 @@ impl<R: Read + Seek> PupArchive<R> {
 
         // Additional sanity check: ensure header_length can at least contain the tables.
         let min_header_length = PUP_HEADER_SIZE
-            + (header.file_count as u64) * PUP_FILEINFO_SIZE
-            + (header.file_count as u64) * PUP_HASH_SIZE;
+            + header.file_count * PUP_FILEINFO_SIZE
+            + header.file_count * PUP_HASH_SIZE;
         if header.header_length < min_header_length {
             return Err(PupError::ExpectedSizeMismatch);
         }
@@ -143,7 +143,7 @@ impl<R: Read + Seek> PupArchive<R> {
         })
     }
 
-    pub fn header(&self) -> &PupHeader {
+    pub const fn header(&self) -> &PupHeader {
         &self.header
     }
 
@@ -155,11 +155,11 @@ impl<R: Read + Seek> PupArchive<R> {
         &self.hashes
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.files.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
 

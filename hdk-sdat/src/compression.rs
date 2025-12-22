@@ -1,12 +1,12 @@
-//! Custom PlayStation LZ compression/decompression
+//! Custom `PlayStation` LZ compression/decompression
 //!
 //! This module implements a reverse-engineered custom Lempel-Ziv-Markov based compression
-//! algorithm used by PlayStation systems. The algorithm uses range coding and a sliding
+//! algorithm used by `PlayStation` systems. The algorithm uses range coding and a sliding
 //! window dictionary for decompression.
 
 use crate::error::CompressionError;
 
-/// Range decoder state for PlayStation LZ decompression
+/// Range decoder state for `PlayStation` LZ decompression
 struct RangeDecoder<'a> {
     range: u32,
     code: u32,
@@ -21,10 +21,10 @@ impl<'a> RangeDecoder<'a> {
             return Err(CompressionError::InvalidFormat);
         }
 
-        let code = ((input[1] as u32) << 24)
-            | ((input[2] as u32) << 16)
-            | ((input[3] as u32) << 8)
-            | (input[4] as u32);
+        let code = (u32::from(input[1]) << 24)
+            | (u32::from(input[2]) << 16)
+            | (u32::from(input[3]) << 8)
+            | u32::from(input[4]);
 
         Ok(RangeDecoder {
             range: 0xFFFFFFFF,
@@ -39,7 +39,7 @@ impl<'a> RangeDecoder<'a> {
         if (self.range >> 24) == 0 {
             self.range <<= 8;
             if self.src_pos < self.src.len() {
-                self.code = (self.code << 8) + (self.src[self.src_pos] as u32);
+                self.code = (self.code << 8) + u32::from(self.src[self.src_pos]);
                 self.src_pos += 1;
             } else {
                 return Err(CompressionError::DecompressionFailed(
@@ -58,7 +58,7 @@ impl<'a> RangeDecoder<'a> {
     ) -> Result<bool, CompressionError> {
         self.decode_range()?;
 
-        let val = (self.range >> 8) * (*c as u32);
+        let val = (self.range >> 8) * u32::from(*c);
         *c -= *c >> 3;
 
         if let Some(ref mut idx) = index {
@@ -164,7 +164,7 @@ impl<'a> RangeDecoder<'a> {
     }
 }
 
-/// Decompress data using custom PlayStation LZ algorithm
+/// Decompress data using custom `PlayStation` LZ algorithm
 pub fn decompress(input: &[u8], output: &mut [u8]) -> Result<usize, CompressionError> {
     if input.is_empty() {
         return Err(CompressionError::InvalidFormat);
@@ -215,41 +215,7 @@ pub fn decompress(input: &[u8], output: &mut [u8]) -> Result<usize, CompressionE
 
         let bit = decoder.decode_bit(None, &mut tmp[tmp_sect1_offset])?;
 
-        if !bit {
-            // Raw char
-            offset = offset.saturating_sub(1);
-            if out_pos >= output.len() {
-                return Ok(out_pos);
-            }
-
-            // Locate first section
-            let sect = (((((out_pos & 7) << 8) + (prev as usize)) >> (head as usize)) & 7) * 0xFF;
-            if sect >= tmp.len() {
-                return Err(CompressionError::DecompressionFailed(
-                    "Buffer overflow in sect calculation".to_string(),
-                ));
-            }
-
-            let mut index = 1i32;
-
-            // Read, decode and write back
-            loop {
-                let idx_val = index as usize;
-                if (sect + idx_val) >= tmp.len() {
-                    return Err(CompressionError::DecompressionFailed(
-                        "Buffer overflow in index loop".to_string(),
-                    ));
-                }
-                decoder.decode_bit(Some(&mut index), &mut tmp[sect + idx_val])?;
-                if (index >> 8) != 0 {
-                    break;
-                }
-            }
-
-            // Save index
-            output[out_pos] = index as u8;
-            out_pos += 1;
-        } else {
+        if bit {
             // Compressed char stream
             let mut index = -1i32;
             let mut tmp_sect1_offset = offset + 0xB68;
@@ -264,7 +230,7 @@ pub fn decompress(input: &[u8], output: &mut [u8]) -> Result<usize, CompressionE
                 }
 
                 let bit_flag = decoder.decode_bit(None, &mut tmp[tmp_sect1_offset])?;
-                index += if bit_flag { 1 } else { 0 };
+                index += i32::from(bit_flag);
 
                 if !bit_flag || index >= 6 {
                     break;
@@ -375,7 +341,7 @@ pub fn decompress(input: &[u8], output: &mut [u8]) -> Result<usize, CompressionE
             offset = ((buf_end + 1) & 1) + 6;
 
             // Copy data
-            for i in 0..(data_length as usize) + 1 {
+            for i in 0..=(data_length as usize) {
                 if buf_start + i >= out_pos || out_pos + i >= output.len() {
                     return Err(CompressionError::DecompressionFailed(
                         "Copy operation bounds error".to_string(),
@@ -385,6 +351,40 @@ pub fn decompress(input: &[u8], output: &mut [u8]) -> Result<usize, CompressionE
             }
 
             out_pos = buf_end;
+        } else {
+            // Raw char
+            offset = offset.saturating_sub(1);
+            if out_pos >= output.len() {
+                return Ok(out_pos);
+            }
+
+            // Locate first section
+            let sect = (((((out_pos & 7) << 8) + (prev as usize)) >> (head as usize)) & 7) * 0xFF;
+            if sect >= tmp.len() {
+                return Err(CompressionError::DecompressionFailed(
+                    "Buffer overflow in sect calculation".to_string(),
+                ));
+            }
+
+            let mut index = 1i32;
+
+            // Read, decode and write back
+            loop {
+                let idx_val = index as usize;
+                if (sect + idx_val) >= tmp.len() {
+                    return Err(CompressionError::DecompressionFailed(
+                        "Buffer overflow in index loop".to_string(),
+                    ));
+                }
+                decoder.decode_bit(Some(&mut index), &mut tmp[sect + idx_val])?;
+                if (index >> 8) != 0 {
+                    break;
+                }
+            }
+
+            // Save index
+            output[out_pos] = index as u8;
+            out_pos += 1;
         }
 
         if out_pos > 0 {
@@ -393,7 +393,7 @@ pub fn decompress(input: &[u8], output: &mut [u8]) -> Result<usize, CompressionE
     }
 }
 
-/// Compress data using custom PlayStation LZ algorithm
+/// Compress data using custom `PlayStation` LZ algorithm
 /// Note: Only decompression is implemented in the original C code
 pub fn compress(_input: &[u8], _output: &mut [u8]) -> Result<usize, CompressionError> {
     Err(CompressionError::CompressionFailed(
@@ -402,6 +402,7 @@ pub fn compress(_input: &[u8], _output: &mut [u8]) -> Result<usize, CompressionE
 }
 
 /// Check if data appears to be compressed based on header
+#[must_use] 
 pub fn is_compressed(data: &[u8]) -> bool {
     if data.is_empty() {
         return false;
@@ -422,10 +423,10 @@ pub fn get_decompressed_size(compressed_data: &[u8]) -> Result<usize, Compressio
 
     if head < 0 {
         // Uncompressed data - size is stored in bytes 1-4
-        let size = ((compressed_data[1] as u32) << 24)
-            | ((compressed_data[2] as u32) << 16)
-            | ((compressed_data[3] as u32) << 8)
-            | (compressed_data[4] as u32);
+        let size = (u32::from(compressed_data[1]) << 24)
+            | (u32::from(compressed_data[2]) << 16)
+            | (u32::from(compressed_data[3]) << 8)
+            | u32::from(compressed_data[4]);
         Ok(size as usize)
     } else {
         // Compressed data - we can't determine the size without decompressing
@@ -438,10 +439,10 @@ pub fn get_decompressed_size(compressed_data: &[u8]) -> Result<usize, Compressio
 
 #[cfg(test)]
 mod tests {
-    use crate::block::METADATA_OFFSET;
+    
 
     use super::*;
-    use std::fs;
+    
 
     #[test]
     fn test_is_compressed() {
@@ -523,8 +524,7 @@ mod tests {
         let result = decompress(&input, &mut output);
         assert!(
             result.is_err(),
-            "Expected decompression to fail for minimal input, got: {:?}",
-            result
+            "Expected decompression to fail for minimal input, got: {result:?}"
         );
     }
 

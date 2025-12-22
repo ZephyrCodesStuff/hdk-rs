@@ -81,10 +81,7 @@ impl<W: Write> SharcWriter<W> {
         name_hash: u32,
         compression: CompressionType,
         mut reader: &mut Rd,
-    ) -> io::Result<()>
-    where
-        Rd: Read,
-    {
+    ) -> io::Result<()> {
         let uncompressed_size;
 
         let data: Vec<u8> = match compression {
@@ -171,12 +168,12 @@ impl<W: Write> SharcWriter<W> {
         match self.endianness {
             Endianness::Little => {
                 self.inner.write_u32::<LittleEndian>(ARCHIVE_MAGIC)?;
-                let flags_and_version = ((self.version as u32) << 16) | (self.flags as u32);
+                let flags_and_version = (u32::from(self.version) << 16) | u32::from(self.flags);
                 self.inner.write_u32::<LittleEndian>(flags_and_version)?;
             }
             Endianness::Big => {
                 self.inner.write_u32::<BigEndian>(ARCHIVE_MAGIC)?;
-                let flags_and_version = ((self.version as u32) << 16) | (self.flags as u32);
+                let flags_and_version = (u32::from(self.version) << 16) | u32::from(self.flags);
                 self.inner.write_u32::<BigEndian>(flags_and_version)?;
             }
         }

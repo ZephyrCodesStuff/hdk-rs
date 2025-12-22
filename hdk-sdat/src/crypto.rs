@@ -11,15 +11,15 @@ pub const SDAT_KEY: [u8; 16] = [
 ];
 
 /// SDAT flag value (also defined in headers.rs but duplicated here for convenience)
-pub const SDAT_FLAG: u32 = 0x01000000;
+pub const SDAT_FLAG: u32 = 0x0100_0000;
 
 /// EDAT/SDAT related flags
-pub const EDAT_COMPRESSED_FLAG: u32 = 0x00000001;
-pub const EDAT_FLAG_0X02: u32 = 0x00000002;
-pub const EDAT_ENCRYPTED_KEY_FLAG: u32 = 0x00000008;
-pub const EDAT_FLAG_0X10: u32 = 0x00000010;
-pub const EDAT_FLAG_0X20: u32 = 0x00000020;
-pub const EDAT_DEBUG_DATA_FLAG: u32 = 0x80000000;
+pub const EDAT_COMPRESSED_FLAG: u32 = 0x0000_0001;
+pub const EDAT_FLAG_0X02: u32 = 0x0000_0002;
+pub const EDAT_ENCRYPTED_KEY_FLAG: u32 = 0x0000_0008;
+pub const EDAT_FLAG_0X10: u32 = 0x0000_0010;
+pub const EDAT_FLAG_0X20: u32 = 0x0000_0020;
+pub const EDAT_DEBUG_DATA_FLAG: u32 = 0x8000_0000;
 
 /// EDAT initialization vector (all zeros)
 pub const EDAT_IV: [u8; 16] = [0u8; 16];
@@ -49,12 +49,12 @@ pub const SDAT_FOOTER_V1: [u8; 16] = [
     0x66, 0x69, 0x6E, 0x69, 0x73, 0x68, 0x65, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-/// NPDRM OMAC key 2 (used for dev_hash generation)
+/// NPDRM OMAC key 2 (used for `dev_hash` generation)
 pub const NPDRM_OMAC_KEY_2: [u8; 16] = [
     0x6B, 0xA5, 0x29, 0x76, 0xEF, 0xDA, 0x16, 0xEF, 0x3C, 0x33, 0x9F, 0xB2, 0x97, 0x1E, 0x25, 0x6B,
 ];
 
-/// NPDRM OMAC key 3 (used for title_hash generation)
+/// NPDRM OMAC key 3 (used for `title_hash` generation)
 pub const NPDRM_OMAC_KEY_3: [u8; 16] = [
     0x9B, 0x51, 0x5F, 0xEA, 0xCF, 0x75, 0x06, 0x49, 0x81, 0xAA, 0x60, 0x4D, 0x91, 0xA5, 0x4E, 0x97,
 ];
@@ -66,7 +66,8 @@ pub struct CryptoContext {
 
 impl CryptoContext {
     /// Create a new cryptographic context
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {}
     }
 
@@ -107,7 +108,7 @@ impl CryptoContext {
         }
 
         let cipher = Aes128::new_from_slice(key)
-            .map_err(|e| CryptoError::AesError(format!("Failed to create AES cipher: {}", e)))?;
+            .map_err(|e| CryptoError::AesError(format!("Failed to create AES cipher: {e}")))?;
 
         let mut prev_ciphertext = *Block::from_slice(iv);
 
@@ -170,7 +171,7 @@ impl CryptoContext {
         }
 
         let cipher = Aes128::new_from_slice(key)
-            .map_err(|e| CryptoError::AesError(format!("Failed to create AES cipher: {}", e)))?;
+            .map_err(|e| CryptoError::AesError(format!("Failed to create AES cipher: {e}")))?;
 
         let mut prev_ciphertext = *Block::from_slice(iv);
 
@@ -227,7 +228,7 @@ impl CryptoContext {
         }
 
         let cipher = Aes128::new_from_slice(key)
-            .map_err(|e| CryptoError::AesError(format!("Failed to create AES cipher: {}", e)))?;
+            .map_err(|e| CryptoError::AesError(format!("Failed to create AES cipher: {e}")))?;
 
         let mut block = *Block::from_slice(input);
         cipher.encrypt_block(&mut block);
@@ -246,6 +247,7 @@ impl CryptoContext {
     /// # Returns
     ///
     /// Returns 20-byte HMAC-SHA1 hash
+    #[must_use]
     pub fn hmac_sha1(&self, key: &[u8], data: &[u8]) -> [u8; 20] {
         let mut ipad = [0x36u8; 64];
         let mut opad = [0x5cu8; 64];
@@ -254,8 +256,7 @@ impl CryptoContext {
         let key_bytes = if key.len() > 64 {
             let mut hasher = Sha1::new();
             hasher.update(key);
-            let hashed = hasher.digest();
-            hashed.bytes().to_vec()
+            hasher.digest().bytes().to_vec()
         } else {
             key.to_vec()
         };
@@ -293,6 +294,7 @@ impl CryptoContext {
     /// # Returns
     ///
     /// Returns 16-byte AES-CMAC
+    #[must_use]
     pub fn aes_cmac(&self, key: &[u8], data: &[u8]) -> [u8; 16] {
         if key.len() != 16 {
             return [0u8; 16];
@@ -439,7 +441,7 @@ impl CryptoContext {
     ///
     /// # Returns
     ///
-    /// Returns (final_key, final_iv) tuple
+    /// Returns (`final_key`, `final_iv`) tuple
     pub fn generate_key(
         &self,
         crypto_mode: u32,
@@ -479,8 +481,7 @@ impl CryptoContext {
             }
             _ => {
                 return Err(CryptoError::AesError(format!(
-                    "Unknown crypto mode: 0x{:08X}",
-                    mode
+                    "Unknown crypto mode: 0x{mode:08X}"
                 )));
             }
         }
@@ -533,8 +534,7 @@ impl CryptoContext {
             }
             _ => {
                 return Err(CryptoError::AesError(format!(
-                    "Unknown hash mode: 0x{:08X}",
-                    mode
+                    "Unknown hash mode: 0x{mode:08X}"
                 )));
             }
         }
@@ -549,7 +549,7 @@ impl Default for CryptoContext {
     }
 }
 
-/// Generate SDAT decryption key from dev_hash
+/// Generate SDAT decryption key from `dev_hash`
 ///
 /// # Arguments
 ///
@@ -557,11 +557,12 @@ impl Default for CryptoContext {
 ///
 /// # Returns
 ///
-/// Returns 16-byte SDAT key (XOR of dev_hash and SDAT_KEY)
+/// Returns 16-byte SDAT key (XOR of `dev_hash` and `SDAT_KEY`)
 ///
 /// # Requirements
 ///
 /// Addresses requirement 5.1, 5.2: SDAT key derivation
+#[must_use]
 pub fn generate_sdat_key(dev_hash: &[u8; 16]) -> [u8; 16] {
     let mut key = [0u8; 16];
     for i in 0..16 {
@@ -585,6 +586,7 @@ pub fn generate_sdat_key(dev_hash: &[u8; 16]) -> [u8; 16] {
 /// # Requirements
 ///
 /// Addresses requirement 5.1, 5.2: Block key generation for SDAT operations
+#[must_use]
 pub fn generate_block_key(block_number: u32, dev_hash: &[u8; 16], npd_version: u32) -> [u8; 16] {
     let mut block_key = [0u8; 16];
 

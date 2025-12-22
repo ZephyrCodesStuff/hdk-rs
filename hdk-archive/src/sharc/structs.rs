@@ -22,10 +22,11 @@ pub struct SharcEntry {
 
 impl SharcEntry {
     // Helper accessors
-    pub fn offset(&self) -> u64 {
+    pub const fn offset(&self) -> u64 {
         self.offset_and_comp.0 as u64
     }
-    pub fn compression(&self) -> u8 {
+
+    pub const fn compression(&self) -> u8 {
         self.offset_and_comp.1
     }
 
@@ -36,7 +37,7 @@ impl SharcEntry {
 
 /// A small, copyable metadata view for a SHARC entry.
 ///
-/// This is intentionally independent from the BinRead struct so callers can
+/// This is intentionally independent from the `BinRead` struct so callers can
 /// inspect metadata without caring about binrw-specific representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SharcEntryMetadata {

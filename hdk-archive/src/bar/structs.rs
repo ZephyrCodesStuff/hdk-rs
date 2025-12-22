@@ -24,10 +24,12 @@ pub struct BarEntry {
 }
 
 impl BarEntry {
-    pub fn offset(&self) -> u32 {
+    #[must_use] 
+    pub const fn offset(&self) -> u32 {
         self.offset_and_comp.0
     }
 
+    #[must_use] 
     pub fn compression(&self) -> CompressionType {
         let raw = self.offset_and_comp.1;
         CompressionType::try_from(raw).unwrap_or(CompressionType::None)

@@ -40,7 +40,7 @@ impl<W: Write + Seek> BarWriter<W> {
         }
     }
 
-    pub fn with_flags(mut self, flags: BitFlags<ArchiveFlags>) -> Self {
+    pub const fn with_flags(mut self, flags: BitFlags<ArchiveFlags>) -> Self {
         self.flags = flags;
         self
     }
@@ -144,7 +144,7 @@ impl<W: Write + Seek> BarWriter<W> {
         let version_u16: u16 = version.into();
         let flags_u16 = self.flags.bits();
 
-        let ver_flags = ((version_u16 as u32) << 16) | (flags_u16 as u32);
+        let ver_flags = (u32::from(version_u16) << 16) | u32::from(flags_u16);
         self.inner.write_u32::<LittleEndian>(ver_flags)?;
 
         // Priority (0 default)
@@ -160,7 +160,7 @@ impl<W: Write + Seek> BarWriter<W> {
             self.inner.write_i32::<LittleEndian>(entry.name_hash)?;
 
             let comp_val: u8 = entry.compression.into();
-            let val = (entry.offset & 0xFFFFFFFC) | (comp_val as u32);
+            let val = (entry.offset & 0xFFFFFFFC) | u32::from(comp_val);
             self.inner.write_u32::<LittleEndian>(val)?;
 
             self.inner
@@ -172,14 +172,14 @@ impl<W: Write + Seek> BarWriter<W> {
         // For encrypted entries we need to build the encrypted payload now that
         // offsets and file_count are known (the IV depends on these values).
         for entry in &mut self.entries {
-            if entry.compression == CompressionType::Encrypted {
-                if let Some(checksum) = entry.sha1 {
+            if entry.compression == CompressionType::Encrypted
+                && let Some(checksum) = entry.sha1 {
                     // Forge IV
                     let iv = crate::crypto::forge_iv(
-                        file_count as u64,
-                        entry.uncompressed_size as u64,
-                        entry.compressed_size as u64,
-                        entry.offset as u64,
+                        u64::from(file_count),
+                        u64::from(entry.uncompressed_size),
+                        u64::from(entry.compressed_size),
+                        u64::from(entry.offset),
                         0, // timestamp currently 0
                     );
 
@@ -219,7 +219,6 @@ impl<W: Write + Seek> BarWriter<W> {
 
                     entry.data = final_data;
                 }
-            }
 
             self.inner.write_all(&entry.data)?;
 

@@ -45,7 +45,7 @@ impl<R: Read + Seek> BarReader<R> {
         if version != ArchiveVersion::BAR {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Expected BAR version, got {:?}", version),
+                format!("Expected BAR version, got {version:?}"),
             ));
         }
 
@@ -72,7 +72,7 @@ impl<R: Read + Seek> BarReader<R> {
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             toc_data = out;
 
-            toc_base = 24 + compressed_size as u64;
+            toc_base = 24 + u64::from(compressed_size);
         } else {
             toc_data = vec![0u8; entries_size as usize];
             reader.read_exact(&mut toc_data)?;
@@ -113,7 +113,7 @@ impl<R: Read + Seek> BarReader<R> {
     }
 
     pub fn entry_metadata(&self, index: usize) -> Option<BarEntryMetadata> {
-        self.entries.get(index).map(|e| e.into())
+        self.entries.get(index).map(std::convert::Into::into)
     }
 
     pub fn entry_reader<'a>(&'a mut self, index: usize) -> io::Result<Box<dyn Read + 'a>> {
@@ -122,7 +122,7 @@ impl<R: Read + Seek> BarReader<R> {
             .get(index)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Index out of bounds"))?;
 
-        let offset = entry.offset() as u64;
+        let offset = u64::from(entry.offset());
         let abs_offset = self.toc_base + offset;
 
         self.inner.seek(SeekFrom::Start(abs_offset))?;
@@ -135,10 +135,10 @@ impl<R: Read + Seek> BarReader<R> {
         match comp_type {
             CompressionType::Encrypted => {
                 let iv = crate::crypto::forge_iv(
-                    self.header.file_count as u64,
-                    entry.uncompressed_size as u64,
-                    entry.compressed_size as u64,
-                    entry.offset() as u64,
+                    u64::from(self.header.file_count),
+                    u64::from(entry.uncompressed_size),
+                    u64::from(entry.compressed_size),
+                    u64::from(entry.offset()),
                     self.header.timestamp,
                 );
 
@@ -192,16 +192,16 @@ fn decompress_data_helper(
     match ctype {
         CompressionType::None => Ok(data.to_vec()),
         CompressionType::ZLib => {
-            if !zlib_header {
+            if zlib_header {
+                let mut d = flate2::read::ZlibDecoder::new(data);
+                let mut out = Vec::new();
+                d.read_to_end(&mut out)?;
+                Ok(out)
+            } else {
                 let mut d = flate2::Decompress::new(zlib_header);
                 let mut out = Vec::new();
                 d.decompress_vec(data, &mut out, flate2::FlushDecompress::None)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                Ok(out)
-            } else {
-                let mut d = flate2::read::ZlibDecoder::new(data);
-                let mut out = Vec::new();
-                d.read_to_end(&mut out)?;
                 Ok(out)
             }
         }

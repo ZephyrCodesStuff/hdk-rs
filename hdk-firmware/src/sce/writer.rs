@@ -35,7 +35,7 @@ pub struct SceWriter<W: Write + Seek> {
 }
 
 impl<W: Write + Seek> SceWriter<W> {
-    pub fn new(inner: W) -> Self {
+    pub const fn new(inner: W) -> Self {
         Self {
             inner,
             version: 1,
@@ -50,25 +50,25 @@ impl<W: Write + Seek> SceWriter<W> {
     }
 
     /// Set debug flag (if true, metadata info will not be encrypted).
-    pub fn set_debug(&mut self, debug: bool) {
+    pub const fn set_debug(&mut self, debug: bool) {
         self.debug = debug;
     }
 
-    pub fn set_version(&mut self, v: u32) {
+    pub const fn set_version(&mut self, v: u32) {
         self.version = v;
     }
 
-    pub fn set_se_flags(&mut self, f: u16) {
+    pub const fn set_se_flags(&mut self, f: u16) {
         self.se_flags = f;
     }
 
-    pub fn set_se_type(&mut self, t: u16) {
+    pub const fn set_se_type(&mut self, t: u16) {
         self.se_type = t;
     }
 
     /// Set the metadata key/iv used to encrypt metadata headers (these are stored
     /// in the metadata info and will be encrypted with the provided ERK/RIV by the caller).
-    pub fn set_meta_key_iv(&mut self, key: [u8; 16], iv: [u8; 16]) {
+    pub const fn set_meta_key_iv(&mut self, key: [u8; 16], iv: [u8; 16]) {
         self.meta_key = key;
         self.meta_iv = iv;
     }
@@ -168,7 +168,7 @@ impl<W: Write + Seek> SceWriter<W> {
         self.inner.write_u32::<BigEndian>(0)?;
 
         // placeholders for se_hsize and se_esize, will patch later
-        let se_hsize_pos = self.inner.seek(SeekFrom::Current(0))?;
+        let se_hsize_pos = self.inner.stream_position()?;
         self.inner.write_u64::<BigEndian>(0)?; // se_hsize
         self.inner.write_u64::<BigEndian>(0)?; // se_esize
 
@@ -189,12 +189,12 @@ impl<W: Write + Seek> SceWriter<W> {
         crypto::aes_decrypt_ctr(&self.meta_key, &self.meta_iv, &mut encrypted_meta_headers)
             .map_err(|_| SceError::InvalidMetadata)?;
         // Remember where metadata headers are written so we can patch them later
-        let headers_start_pos = self.inner.seek(SeekFrom::Current(0))?;
+        let headers_start_pos = self.inner.stream_position()?;
         self.inner.write_all(&encrypted_meta_headers)?;
 
         // Compute header sizes
-        let header_end_pos = self.inner.seek(SeekFrom::Current(0))?;
-        let se_hsize = header_end_pos as u64; // total header size up to end of metadata headers
+        let header_end_pos = self.inner.stream_position()?;
+        let se_hsize = header_end_pos; // total header size up to end of metadata headers
 
         // Data: stream each section and record actual offsets/sizes so we can patch section headers
         let mut actual_data_length: u64 = 0;
@@ -202,7 +202,7 @@ impl<W: Write + Seek> SceWriter<W> {
 
         for (idx, s) in self.sections.iter().enumerate() {
             // record start position
-            let start_pos = self.inner.seek(SeekFrom::Current(0))?;
+            let start_pos = self.inner.stream_position()?;
             // Prepare writer chain: optionally encryption and/or compression
             // Base writer is self.inner (we pass a &mut dyn Write to the callback)
             if s.encrypted == 3 {
@@ -212,7 +212,7 @@ impl<W: Write + Seek> SceWriter<W> {
                     cipher: ctr::Ctr64BE<aes::Aes128>,
                 }
 
-                impl<'a, W: Write> Write for CtrWriter<'a, W> {
+                impl<W: Write> Write for CtrWriter<'_, W> {
                     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
                         let mut tmp = buf.to_vec();
                         self.cipher.apply_keystream(&mut tmp);
@@ -258,7 +258,7 @@ impl<W: Write + Seek> SceWriter<W> {
             }
 
             // compute actual size written for this section
-            let end_pos = self.inner.seek(SeekFrom::Current(0))?;
+            let end_pos = self.inner.stream_position()?;
             let actual_size = end_pos
                 .checked_sub(start_pos)
                 .ok_or(SceError::InvalidMetadata)?;
@@ -294,7 +294,7 @@ impl<W: Write + Seek> SceWriter<W> {
         self.inner.write_all(&patched_encrypted_meta_headers)?;
 
         // Patch header: se_hsize and se_esize
-        let cur = self.inner.seek(SeekFrom::Current(0))?;
+        let cur = self.inner.stream_position()?;
         let se_esize = actual_data_length;
         self.inner.seek(SeekFrom::Start(se_hsize_pos))?;
         self.inner.write_u64::<BigEndian>(se_hsize)?;

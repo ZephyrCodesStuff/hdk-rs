@@ -44,7 +44,7 @@ pub struct PupStreamWriter<W: Write> {
 }
 
 impl<W: Write> PupStreamWriter<W> {
-    pub fn new(inner: W) -> Self {
+    pub const fn new(inner: W) -> Self {
         Self {
             inner,
             package_version: 1,
@@ -127,13 +127,13 @@ impl<W: Write> PupStreamWriter<W> {
             written: u64,
         }
 
-        impl<'a> Write for CountingWriter<'a> {
+        impl Write for CountingWriter<'_> {
             fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
                 let n = self.inner.write(buf)?;
                 self.written = self
                     .written
                     .checked_add(n as u64)
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "write count overflow"))?;
+                    .ok_or_else(|| io::Error::other("write count overflow"))?;
                 Ok(n)
             }
 
@@ -179,7 +179,7 @@ pub struct PupWriter<W: Write> {
 }
 
 impl<W: Write> PupWriter<W> {
-    pub fn new(inner: W) -> Self {
+    pub const fn new(inner: W) -> Self {
         Self {
             inner,
             package_version: 1,
@@ -188,6 +188,11 @@ impl<W: Write> PupWriter<W> {
         }
     }
 
+    /// Convenience: add an entry from a byte slice.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if computing the SHA1 checksum fails.
     pub fn add_entry_from_bytes(
         &mut self,
         entry_id: u64,
@@ -203,6 +208,10 @@ impl<W: Write> PupWriter<W> {
     }
 
     /// Streaming input convenience: reads the whole reader into memory.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if reading from `reader` fails.
     pub fn add_entry_from_reader<Rd: Read + ?Sized>(
         &mut self,
         entry_id: u64,
@@ -219,6 +228,12 @@ impl<W: Write> PupWriter<W> {
         Ok(())
     }
 
+    /// Finish writing the PUP, returning the underlying writer.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if no entries were added,
+    /// or if writing to the underlying writer fails.
     pub fn finish(self) -> Result<W, PupWriteError> {
         if self.entries.is_empty() {
             return Err(PupWriteError::NoEntries);

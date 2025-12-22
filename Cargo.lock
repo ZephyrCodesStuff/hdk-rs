@@ -20,24 +20,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "archive"
-version = "0.1.0"
-dependencies = [
- "aes",
- "binrw",
- "byteorder",
- "comp",
- "ctr",
- "enumflags2",
- "flate2",
- "num_enum",
- "rand",
- "secure",
- "sha1",
- "sha1_smol",
-]
-
-[[package]]
 name = "array-init"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -129,15 +111,6 @@ checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
  "crypto-common 0.1.7",
  "inout",
-]
-
-[[package]]
-name = "comp"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "flate2",
- "lzma-rust2",
 ]
 
 [[package]]
@@ -270,19 +243,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
-name = "firmware"
-version = "0.1.0"
-dependencies = [
- "aes",
- "byteorder",
- "cbc",
- "ctr",
- "flate2",
- "sha1_smol",
- "thiserror",
-]
-
-[[package]]
 name = "flate2"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -339,6 +299,68 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+
+[[package]]
+name = "hdk-archive"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "binrw",
+ "byteorder",
+ "ctr",
+ "enumflags2",
+ "flate2",
+ "hdk-comp",
+ "hdk-secure",
+ "num_enum",
+ "rand",
+ "sha1",
+ "sha1_smol",
+]
+
+[[package]]
+name = "hdk-comp"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "flate2",
+ "lzma-rust2",
+]
+
+[[package]]
+name = "hdk-firmware"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "byteorder",
+ "cbc",
+ "ctr",
+ "flate2",
+ "sha1_smol",
+ "thiserror",
+]
+
+[[package]]
+name = "hdk-sdat"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "git-version",
+ "sha1_smol",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "hdk-secure"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "cbc",
+ "cipher",
+ "ctr",
+ "ecb",
+]
 
 [[package]]
 name = "hybrid-array"
@@ -517,28 +539,6 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
-
-[[package]]
-name = "sdat"
-version = "0.1.0"
-dependencies = [
- "aes",
- "git-version",
- "sha1_smol",
- "thiserror",
- "tracing",
-]
-
-[[package]]
-name = "secure"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "cbc",
- "cipher",
- "ctr",
- "ecb",
-]
 
 [[package]]
 name = "serde_core"

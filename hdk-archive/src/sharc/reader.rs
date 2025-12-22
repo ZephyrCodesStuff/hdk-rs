@@ -5,10 +5,10 @@ use ctr::Ctr128BE;
 use std::convert::TryFrom;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 
-use comp::zlib::reader::SegmentedZlibReader;
 use flate2::read::ZlibDecoder;
-use secure::reader::CryptoReader;
-use secure::xtea::modes::XteaPS3;
+use hdk_comp::zlib::reader::SegmentedZlibReader;
+use hdk_secure::reader::CryptoReader;
+use hdk_secure::xtea::modes::XteaPS3;
 
 use super::structs::{
     SharcEntry, SharcEntryMetadata, SharcHeader, SharcInnerHeader, SharcPreamble,

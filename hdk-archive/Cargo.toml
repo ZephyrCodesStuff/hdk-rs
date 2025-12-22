@@ -1,5 +1,5 @@
 [package]
-name = "archive"
+name = "hdk-archive"
 version = "0.1.0"
 edition = "2024"
 
@@ -15,8 +15,8 @@ enumflags2 = "0.7.12"
 sha1_smol = "1.0.1"
 
 # Local crates
-comp = { path = "../comp" }
-secure = { path = "../secure" }
+hdk-comp = { path = "../hdk-comp" }
+hdk-secure = { path = "../hdk-secure" }
 
 [dev-dependencies]
 sha1 = "0.11.0-rc.3"

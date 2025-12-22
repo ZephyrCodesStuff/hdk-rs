@@ -4,11 +4,10 @@ use flate2::{Compression, write::ZlibEncoder};
 use std::io::{self, Cursor, Read, Seek, Write};
 
 use crate::crypto::{DEFAULT_KEY, SIGNATURE_KEY};
-use comp::zlib::writer::SegmentedZlibWriter;
 use ctr::Ctr64BE;
 use ctr::cipher::KeyIvInit;
-use secure::blowfish::Blowfish;
-use secure::writer::CryptoWriter;
+use hdk_comp::zlib::writer::SegmentedZlibWriter;
+use hdk_secure::{blowfish::Blowfish, writer::CryptoWriter};
 
 use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType};
 

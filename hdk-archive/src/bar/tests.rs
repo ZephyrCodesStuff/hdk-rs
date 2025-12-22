@@ -154,7 +154,7 @@ mod tests {
         use byteorder::{LittleEndian, WriteBytesExt};
         use ctr::Ctr64BE;
         use ctr::cipher::KeyIvInit;
-        use secure::blowfish::Blowfish;
+        use hdk_secure::blowfish::Blowfish;
         use sha1::Sha1;
         use std::io::Cursor;
 
@@ -162,7 +162,7 @@ mod tests {
         let content = b"Hello Encrypted BAR!";
 
         // Compress using EdgeZLib (segmented zlib writer)
-        let mut seg = comp::zlib::writer::SegmentedZlibWriter::new(Vec::new());
+        let mut seg = hdk_comp::zlib::writer::SegmentedZlibWriter::new(Vec::new());
         use std::io::Write;
         seg.write_all(content).unwrap();
         let compressed = seg.finish().unwrap();
@@ -207,7 +207,7 @@ mod tests {
         type BlowfishCtr = Ctr64BE<Blowfish>;
 
         // Encrypt head with SIGNATURE_KEY using CryptoWriter
-        let mut cw_head = secure::writer::CryptoWriter::new(
+        let mut cw_head = hdk_secure::writer::CryptoWriter::new(
             Vec::new(),
             BlowfishCtr::new(&SIGNATURE_KEY.into(), &iv.into()),
         );
@@ -219,7 +219,7 @@ mod tests {
         iv_as_u64 = iv_as_u64.wrapping_add(3);
         let iv_body = iv_as_u64.to_be_bytes();
 
-        let mut cw_body = secure::writer::CryptoWriter::new(
+        let mut cw_body = hdk_secure::writer::CryptoWriter::new(
             Vec::new(),
             BlowfishCtr::new(&DEFAULT_KEY.into(), &iv_body.into()),
         );

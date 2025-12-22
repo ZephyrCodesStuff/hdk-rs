@@ -1,11 +1,11 @@
 use super::structs::{BarEntry, BarEntryMetadata, BarHeader};
 use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType};
 use binrw::BinReaderExt;
-use comp::zlib::reader::SegmentedZlibReader;
 use ctr::Ctr64BE;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use enumflags2::BitFlags;
-use secure::blowfish::Blowfish;
+use hdk_comp::zlib::reader::SegmentedZlibReader;
+use hdk_secure::blowfish::Blowfish;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 
 use crate::crypto::{DEFAULT_KEY, SIGNATURE_KEY};

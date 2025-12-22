@@ -6,8 +6,8 @@ use flate2::{Compression, write::ZlibEncoder};
 use rand::RngCore;
 use std::io::{self, Read, Write};
 
-use comp::zlib::writer::SegmentedZlibWriter;
-use secure::xtea::modes::XteaPS3;
+use hdk_comp::zlib::writer::SegmentedZlibWriter;
+use hdk_secure::xtea::modes::XteaPS3;
 
 use crate::structs::{ARCHIVE_MAGIC, CompressionType, Endianness};
 
@@ -119,7 +119,7 @@ impl<W: Write> SharcWriter<W> {
 
             let key_ga = self.files_key.into();
             // Use CryptoWriter so encryption is clearly expressed and reusable
-            let mut cw = secure::writer::CryptoWriter::new(
+            let mut cw = hdk_secure::writer::CryptoWriter::new(
                 Vec::new(),
                 XteaPS3::new(&key_ga, iv.as_slice().into()),
             );
@@ -199,7 +199,7 @@ impl<W: Write> SharcWriter<W> {
         inner_buf.extend_from_slice(&self.files_key);
 
         // Encrypt inner_buf with AES-256 CTR using iv using CryptoWriter
-        let mut cw = secure::writer::CryptoWriter::new(
+        let mut cw = hdk_secure::writer::CryptoWriter::new(
             Vec::new(),
             Ctr128BE::<Aes256>::new(&self.key.into(), self.iv.as_slice().into()),
         );
@@ -233,7 +233,7 @@ impl<W: Write> SharcWriter<W> {
         let mut iv_int = u128::from_be_bytes(self.iv);
         iv_int = iv_int.wrapping_add(1);
         let iv_inc = iv_int.to_be_bytes();
-        let mut toc_cw = secure::writer::CryptoWriter::new(
+        let mut toc_cw = hdk_secure::writer::CryptoWriter::new(
             Vec::new(),
             Ctr128BE::<Aes256>::new(&self.key.into(), &iv_inc.into()),
         );

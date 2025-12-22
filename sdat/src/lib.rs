@@ -8,17 +8,25 @@ pub mod crypto;
 pub mod error;
 pub mod headers;
 pub mod memory;
+pub mod reader;
+pub mod writer;
 
 // Re-export main types for convenience
 pub use crypto::CryptoContext;
 pub use error::{CompressionError, CryptoError, MemoryError, SdatError};
 pub use headers::{EdatHeader, NpdHeader};
 pub use memory::MemoryBuffer;
+pub use reader::SdatReader;
+pub use writer::SdatStreamWriter;
+pub use writer::SdatWriter;
 
 use crypto::{
     EDAT_COMPRESSED_FLAG, EDAT_DEBUG_DATA_FLAG, EDAT_ENCRYPTED_KEY_FLAG, EDAT_FLAG_0X02,
     EDAT_FLAG_0X10, EDAT_FLAG_0X20, EDAT_IV,
 };
+
+#[cfg(test)]
+mod tests;
 
 /// Offset to the metadata
 pub const METADATA_OFFSET: usize = 0x100;
@@ -878,7 +886,9 @@ pub fn repack_sdat(
         total_data_size += padded_length;
     }
 
-    let required_size = NpdHeader::SIZE + EdatHeader::SIZE + metadata_size + total_data_size + 0x10; // + footer
+    // SDAT has a fixed metadata offset (0x100). Even though the headers are smaller,
+    // the file layout requires space up to that offset before the metadata/data region.
+    let required_size = METADATA_OFFSET + metadata_size + total_data_size + 0x10; // + footer
 
     if output_buffer.len() < required_size {
         return Err(SdatError::BufferTooSmall {
@@ -1015,706 +1025,706 @@ pub fn repack_sdat(
     Ok(data_pos + 0x10) // Include footer size in returned length
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn test_repack_sdat_basic() {
-        // Test basic SDAT repacking functionality
-        let input_data = b"Hello, SDAT World! This is test data for repacking.";
-        let mut output_buffer = vec![0u8; 0x10000]; // 64KB buffer
-        let filename = "test_file.sdat";
-
-        let result = repack_sdat(input_data, &mut output_buffer, filename);
-        assert!(result.is_ok(), "SDAT repacking should succeed");
-
-        let bytes_written = result.unwrap();
-        assert!(
-            bytes_written > NpdHeader::SIZE + EdatHeader::SIZE,
-            "Should write headers and data"
-        );
-
-        // Verify NPD header
-        let npd_header = NpdHeader::parse(&output_buffer[0..NpdHeader::SIZE]).unwrap();
-        assert_eq!(npd_header.magic, NpdHeader::MAGIC);
-        assert_eq!(npd_header.version, 4);
-
-        // Verify EDAT header
-        let edat_header =
-            EdatHeader::parse(&output_buffer[NpdHeader::SIZE..NpdHeader::SIZE + EdatHeader::SIZE])
-                .unwrap();
-        assert!(edat_header.is_sdat());
-        assert_eq!(edat_header.file_size, input_data.len() as u64);
-        assert_eq!(edat_header.block_size, 0x8000);
-    }
-
-    #[test]
-    fn test_repack_sdat_empty_input() {
-        // Test with empty input data
-        let input_data = b"";
-        let mut output_buffer = vec![0u8; 0x1000];
-        let filename = "empty.sdat";
-
-        let result = repack_sdat(input_data, &mut output_buffer, filename);
-        assert!(result.is_err(), "Empty input should fail");
-    }
-
-    #[test]
-    fn test_repack_sdat_empty_filename() {
-        // Test with empty filename
-        let input_data = b"Test data";
-        let mut output_buffer = vec![0u8; 0x1000];
-        let filename = "";
-
-        let result = repack_sdat(input_data, &mut output_buffer, filename);
-        assert!(result.is_err(), "Empty filename should fail");
-    }
-
-    #[test]
-    fn test_repack_sdat_buffer_too_small() {
-        // Test with output buffer too small
-        let input_data = b"This is test data that should require more space than available";
-        let mut output_buffer = vec![0u8; 100]; // Very small buffer
-        let filename = "test.sdat";
-
-        let result = repack_sdat(input_data, &mut output_buffer, filename);
-        assert!(result.is_err(), "Small buffer should fail");
-
-        if let Err(SdatError::BufferTooSmall { needed, available }) = result {
-            assert!(
-                needed > available,
-                "Should report correct buffer size requirements"
-            );
-        } else {
-            panic!("Should return BufferTooSmall error");
-        }
-    }
-
-    #[test]
-    fn test_repack_unpack_roundtrip() {
-        // Test that we can repack data and then unpack it to get the original data back
-        let original_data = b"This is a test of the SDAT repack/unpack roundtrip functionality. It should work correctly and preserve the original data through the encryption/decryption process.";
-        let mut packed_buffer = vec![0u8; 0x20000]; // 128KB buffer
-        let mut unpacked_buffer = vec![0u8; original_data.len() + 1000]; // Extra space
-        let filename = "roundtrip_test.sdat";
-
-        // Repack the data
-        let pack_result = repack_sdat(original_data, &mut packed_buffer, filename);
-        assert!(pack_result.is_ok(), "Repacking should succeed");
-        let packed_size = pack_result.unwrap();
-
-        // Unpack the data
-        let unpack_result = unpack_sdat(&packed_buffer[..packed_size], &mut unpacked_buffer);
-        assert!(unpack_result.is_ok(), "Unpacking should succeed");
-        let unpacked_size = unpack_result.unwrap();
-
-        // Verify the data matches
-        assert_eq!(
-            unpacked_size,
-            original_data.len(),
-            "Unpacked size should match original"
-        );
-        assert_eq!(
-            &unpacked_buffer[..unpacked_size],
-            original_data,
-            "Unpacked data should match original"
-        );
-    }
-
-    #[test]
-    fn test_repack_sdat_large_data() {
-        // Test with data larger than one block
-        let mut large_data = vec![0u8; 0x10000]; // 64KB data (larger than default 32KB block)
-        for (i, byte) in large_data.iter_mut().enumerate() {
-            *byte = (i % 256) as u8; // Fill with pattern
-        }
-
-        let mut output_buffer = vec![0u8; 0x30000]; // 192KB buffer
-        let filename = "large_test.sdat";
-
-        let result = repack_sdat(&large_data, &mut output_buffer, filename);
-        assert!(result.is_ok(), "Large data repacking should succeed");
-
-        let bytes_written = result.unwrap();
-        assert!(
-            bytes_written > NpdHeader::SIZE + EdatHeader::SIZE,
-            "Should write headers and data"
-        );
-
-        // Verify we can unpack it back
-        let mut unpacked_buffer = vec![0u8; large_data.len() + 1000];
-        let unpack_result = unpack_sdat(&output_buffer[..bytes_written], &mut unpacked_buffer);
-        assert!(unpack_result.is_ok(), "Large data unpacking should succeed");
-
-        let unpacked_size = unpack_result.unwrap();
-        assert_eq!(
-            unpacked_size,
-            large_data.len(),
-            "Unpacked size should match original"
-        );
-        assert_eq!(
-            &unpacked_buffer[..unpacked_size],
-            &large_data,
-            "Unpacked data should match original"
-        );
-    }
-
-    #[test]
-    fn test_unpack_sdat_with_sample_file() {
-        // Load the sample SDAT file
-        let sdat_data = match fs::read("src/tests/samples/sdat/object_T047.sdat") {
-            Ok(data) => data,
-            Err(_) => {
-                println!("Skipping test - sample SDAT file not found");
-                return;
-            }
-        };
-
-        println!("SDAT file size: {} bytes", sdat_data.len());
-
-        // Parse headers to verify our parsing works
-        let npd_header = NpdHeader::parse(&sdat_data[0..NpdHeader::SIZE]).unwrap();
-        let edat_header =
-            EdatHeader::parse(&sdat_data[NpdHeader::SIZE..NpdHeader::SIZE + EdatHeader::SIZE])
-                .unwrap();
-
-        println!("NPD version: {}", npd_header.version);
-        println!("EDAT flags: 0x{:08X}", edat_header.flags);
-        println!("EDAT block size: 0x{:08X}", edat_header.block_size);
-        println!("EDAT file size: 0x{:016X}", edat_header.file_size);
-        println!("Is SDAT: {}", edat_header.is_sdat());
-
-        // Print dev_hash for debugging
-        print!("Dev hash: ");
-        for byte in &npd_header.dev_hash {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        print!("NPD digest: ");
-        for byte in &npd_header.digest {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Generate and print SDAT key
-        let sdat_key = crypto::generate_sdat_key(&npd_header.dev_hash);
-        print!("SDAT key: ");
-        for byte in &sdat_key {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Verify this is indeed an SDAT file
-        assert!(edat_header.is_sdat(), "Sample file should be an SDAT file");
-
-        // Create output buffer (allocate generous size)
-        let mut output_buffer = vec![0u8; sdat_data.len() * 2];
-
-        // Test unpacking
-        let result = unpack_sdat(&sdat_data, &mut output_buffer);
-
-        match result {
-            Ok(size) => {
-                println!(
-                    "Successfully unpacked SDAT file, output size: {} bytes",
-                    size
-                );
-                assert!(size > 0, "Output size should be greater than 0");
-                assert!(
-                    size <= output_buffer.len(),
-                    "Output size should not exceed buffer size"
-                );
-
-                // Let's examine the decrypted content to see if it makes sense
-                println!("First 64 bytes of decrypted content:");
-                for (i, out_i) in output_buffer.iter().enumerate().take(64.min(size)) {
-                    if i % 16 == 0 {
-                        print!("\n{:04X}: ", i);
-                    }
-                    print!("{:02X} ", out_i);
-                }
-                println!();
-
-                // Check if we got the expected magic bytes from the correctly unpacked file
-                let expected_magic = [0xad, 0xef, 0x17, 0xe1];
-                let actual_magic = &output_buffer[0..4];
-
-                println!(
-                    "Expected magic bytes: {:02X} {:02X} {:02X} {:02X}",
-                    expected_magic[0], expected_magic[1], expected_magic[2], expected_magic[3]
-                );
-                println!(
-                    "Actual magic bytes:   {:02X} {:02X} {:02X} {:02X}",
-                    actual_magic[0], actual_magic[1], actual_magic[2], actual_magic[3]
-                );
-
-                if actual_magic == expected_magic {
-                    println!("✅ DECRYPTION IS CORRECT! Magic bytes match.");
-                } else {
-                    println!("❌ DECRYPTION IS WRONG! Magic bytes don't match.");
-                    println!("   This confirms our crypto implementation has bugs.");
-                }
-            }
-            Err(e) => {
-                println!("SDAT unpacking failed: {}", e);
-                // For now, we'll allow this to fail since we're still implementing
-                // The important thing is that we can parse the headers correctly
-                // and the error is related to cryptographic operations, not basic parsing
-                match e {
-                    SdatError::InvalidHash(_) => {
-                        println!("Hash verification failed - this is expected for now");
-                    }
-                    SdatError::CryptoError(_) => {
-                        println!("Crypto operation failed - this is expected for now");
-                    }
-                    _ => {
-                        panic!("Unexpected error type: {}", e);
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_unpack_sdat_invalid_input() {
-        // Test with empty input
-        let mut output_buffer = [0u8; 100];
-        let result = unpack_sdat(&[], &mut output_buffer);
-        assert!(result.is_err());
-
-        // Test with input too small for headers
-        let small_input = [0u8; 10];
-        let result = unpack_sdat(&small_input, &mut output_buffer);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_unpack_sdat_invalid_magic() {
-        // Create a buffer with invalid NPD magic
-        let mut invalid_sdat = vec![0u8; METADATA_OFFSET]; // Size for NPD + EDAT headers
-        invalid_sdat[0..4].copy_from_slice(b"XXXX"); // Invalid magic
-
-        let mut output_buffer = [0u8; 100];
-        let result = unpack_sdat(&invalid_sdat, &mut output_buffer);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_unpack_sdat_non_sdat_file() {
-        // Create a buffer with valid NPD header but no SDAT flag
-        let mut non_sdat = vec![0u8; 0x90];
-        non_sdat[0..4].copy_from_slice(b"NPD\0"); // Valid NPD magic
-        // EDAT flags at offset 0x80 (NPD header size) - no SDAT flag set
-
-        let mut output_buffer = [0u8; 100];
-        let result = unpack_sdat(&non_sdat, &mut output_buffer);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_header_parsing() {
-        // Test NPD header parsing
-        let mut npd_data = vec![0u8; NpdHeader::SIZE];
-        npd_data[0..4].copy_from_slice(b"NPD\0");
-        npd_data[4..8].copy_from_slice(&2u32.to_be_bytes()); // version
-        npd_data[8..12].copy_from_slice(&1u32.to_be_bytes()); // license
-        npd_data[12..16].copy_from_slice(&0u32.to_be_bytes()); // type
-
-        let npd_result = NpdHeader::parse(&npd_data);
-        assert!(npd_result.is_ok());
-
-        let npd = npd_result.unwrap();
-        assert_eq!(npd.magic, *b"NPD\0");
-        assert_eq!(npd.version, 2);
-        assert_eq!(npd.license, 1);
-        assert_eq!(npd.type_, 0);
-
-        // Test EDAT header parsing
-        let mut edat_data = vec![0u8; EdatHeader::SIZE];
-        edat_data[0..4].copy_from_slice(&EdatHeader::SDAT_FLAG.to_be_bytes()); // SDAT flag
-        edat_data[4..8].copy_from_slice(&0x8000u32.to_be_bytes()); // block size
-        edat_data[8..16].copy_from_slice(&1024u64.to_be_bytes()); // file size
-
-        let edat_result = EdatHeader::parse(&edat_data);
-        assert!(edat_result.is_ok());
-
-        let edat = edat_result.unwrap();
-        assert_eq!(edat.flags, EdatHeader::SDAT_FLAG);
-        assert_eq!(edat.block_size, 0x8000);
-        assert_eq!(edat.file_size, 1024);
-        assert!(edat.is_sdat());
-    }
-
-    #[test]
-    fn test_sdat_key_generation() {
-        let dev_hash = [
-            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
-            0xFF, 0x00,
-        ];
-
-        let sdat_key = crypto::generate_sdat_key(&dev_hash);
-
-        // Verify the key is generated correctly (XOR with SDAT_KEY)
-        for i in 0..16 {
-            assert_eq!(sdat_key[i], dev_hash[i] ^ crypto::SDAT_KEY[i]);
-        }
-    }
-
-    #[test]
-    fn test_data_block_processor() {
-        let processor = DataBlockProcessor::new();
-
-        // Test metadata decryption
-        let metadata = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
-            0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
-            0x1D, 0x1E, 0x1F, 0x20,
-        ];
-
-        let decrypted = processor.decrypt_metadata_section(&metadata);
-
-        // Verify the decryption follows the expected XOR pattern
-        assert_eq!(
-            decrypted[0],
-            metadata[0x0C] ^ metadata[0x08] ^ metadata[0x10]
-        );
-        assert_eq!(
-            decrypted[1],
-            metadata[0x0D] ^ metadata[0x09] ^ metadata[0x11]
-        );
-        // ... and so on
-    }
-
-    #[test]
-    fn test_debug_sdat_crypto() {
-        // Load the sample SDAT file for detailed crypto debugging
-        let sdat_data = match fs::read("src/tests/samples/sdat/object_T047.sdat") {
-            Ok(data) => data,
-            Err(_) => {
-                println!("Skipping debug test - sample SDAT file not found");
-                return;
-            }
-        };
-
-        // Parse headers
-        let npd_header = NpdHeader::parse(&sdat_data[0..NpdHeader::SIZE]).unwrap();
-        let edat_header =
-            EdatHeader::parse(&sdat_data[NpdHeader::SIZE..NpdHeader::SIZE + EdatHeader::SIZE])
-                .unwrap();
-
-        println!("=== SDAT Debug Info ===");
-        println!("NPD version: {}", npd_header.version);
-        println!("EDAT flags: 0x{:08X}", edat_header.flags);
-
-        // Analyze the flags
-        println!("Flag analysis:");
-        println!(
-            "  SDAT_FLAG (0x01000000): {}",
-            (edat_header.flags & 0x01000000) != 0
-        );
-        println!(
-            "  COMPRESSED_FLAG (0x00000001): {}",
-            (edat_header.flags & EDAT_COMPRESSED_FLAG) != 0
-        );
-        println!(
-            "  FLAG_0x02 (0x00000002): {}",
-            (edat_header.flags & EDAT_FLAG_0X02) != 0
-        );
-        println!(
-            "  ENCRYPTED_KEY_FLAG (0x00000008): {}",
-            (edat_header.flags & EDAT_ENCRYPTED_KEY_FLAG) != 0
-        );
-        println!(
-            "  FLAG_0x10 (0x00000010): {}",
-            (edat_header.flags & EDAT_FLAG_0X10) != 0
-        );
-        println!(
-            "  FLAG_0x20 (0x00000020): {}",
-            (edat_header.flags & EDAT_FLAG_0X20) != 0
-        );
-        println!(
-            "  DEBUG_DATA_FLAG (0x80000000): {}",
-            (edat_header.flags & EDAT_DEBUG_DATA_FLAG) != 0
-        );
-
-        // Generate SDAT key
-        let sdat_key = crypto::generate_sdat_key(&npd_header.dev_hash);
-        print!("SDAT key: ");
-        for byte in &sdat_key {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Calculate block information
-        let block_num = edat_header
-            .file_size
-            .div_ceil(edat_header.block_size as u64) as usize;
-        let metadata_section_size = if (edat_header.flags & EDAT_COMPRESSED_FLAG) != 0
-            || (edat_header.flags & EDAT_FLAG_0X20) != 0
-        {
-            0x20
-        } else {
-            0x10
-        };
-
-        println!("Block count: {}", block_num);
-        println!("Metadata section size: 0x{:02X}", metadata_section_size);
-        println!("Metadata offset: 0x{:02X}", METADATA_OFFSET);
-
-        // Read first block metadata
-        let metadata_buffer = &sdat_data[METADATA_OFFSET..METADATA_OFFSET + metadata_section_size];
-        print!("First block metadata: ");
-        for byte in metadata_buffer {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Try to parse first block metadata
-        let block_processor = DataBlockProcessor::new();
-        match block_processor.parse_block_metadata(
-            &sdat_data[METADATA_OFFSET..METADATA_OFFSET + block_num * metadata_section_size],
-            0,
-            &edat_header,
-            &npd_header,
-            METADATA_OFFSET as u64,
-            block_num,
-        ) {
-            Ok(metadata) => {
-                println!("First block metadata parsed successfully:");
-                println!("  Offset: 0x{:016X}", metadata.offset);
-                println!("  Length: 0x{:08X}", metadata.length);
-                println!("  Compression end: 0x{:08X}", metadata.compression_end);
-                print!("  Hash: ");
-                for byte in &metadata.hash {
-                    print!("{:02X}", byte);
-                }
-                println!();
-            }
-            Err(e) => {
-                println!("Failed to parse first block metadata: {}", e);
-            }
-        }
-    }
-
-    #[test]
-    fn test_crypto_step_by_step_debug() {
-        // Load the sample SDAT file for step-by-step crypto debugging
-        let sdat_data = match fs::read("src/tests/samples/sdat/object_T047.sdat") {
-            Ok(data) => data,
-            Err(_) => {
-                println!("Skipping crypto debug test - sample SDAT file not found");
-                return;
-            }
-        };
-
-        // Parse headers
-        let npd_header = NpdHeader::parse(&sdat_data[0..NpdHeader::SIZE]).unwrap();
-        let edat_header =
-            EdatHeader::parse(&sdat_data[NpdHeader::SIZE..NpdHeader::SIZE + EdatHeader::SIZE])
-                .unwrap();
-
-        println!("=== Step-by-Step Crypto Debug ===");
-
-        // Step 1: Generate SDAT key
-        let sdat_key = crypto::generate_sdat_key(&npd_header.dev_hash);
-        print!("Step 1 - SDAT key: ");
-        for byte in &sdat_key {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Step 2: Generate block key for block 0
-        let block_key = crypto::generate_block_key(0, &npd_header.dev_hash, npd_header.version);
-        print!("Step 2 - Block key: ");
-        for byte in &block_key {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Step 3: Encrypt block key with SDAT key (AES-ECB)
-        let crypto_ctx = CryptoContext::new();
-        let mut encrypted_block_key = [0u8; 16];
-        crypto_ctx
-            .aes_ecb_encrypt(&sdat_key, &block_key, &mut encrypted_block_key)
-            .unwrap();
-        print!("Step 3 - Encrypted block key: ");
-        for byte in &encrypted_block_key {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Step 4: Generate hash key (encrypt encrypted block key again for FLAG_0x10)
-        let hash_key = if (edat_header.flags & EDAT_FLAG_0X10) != 0 {
-            let mut hash = [0u8; 16];
-            crypto_ctx
-                .aes_ecb_encrypt(&sdat_key, &encrypted_block_key, &mut hash)
-                .unwrap();
-            hash
-        } else {
-            encrypted_block_key
-        };
-        print!("Step 4 - Hash key: ");
-        for byte in &hash_key {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Step 5: Setup crypto and hash modes
-        let crypto_mode = if (edat_header.flags & EDAT_FLAG_0X02) == 0 {
-            0x2
-        } else {
-            0x1
-        };
-        let hash_mode = if (edat_header.flags & EDAT_FLAG_0X10) == 0 {
-            0x02
-        } else if (edat_header.flags & EDAT_FLAG_0X20) == 0 {
-            0x04
-        } else {
-            0x01
-        };
-
-        // Apply encryption flags
-        let crypto_mode = if (edat_header.flags & EDAT_ENCRYPTED_KEY_FLAG) != 0 {
-            crypto_mode | 0x10000000
-        } else {
-            crypto_mode
-        };
-
-        let hash_mode = if (edat_header.flags & EDAT_ENCRYPTED_KEY_FLAG) != 0 {
-            hash_mode | 0x10000000
-        } else {
-            hash_mode
-        };
-
-        println!("Step 5 - Crypto mode: 0x{:08X}", crypto_mode);
-        println!("Step 5 - Hash mode: 0x{:08X}", hash_mode);
-
-        // Step 6: Generate final keys using generate_key and generate_hash
-        let iv = if npd_header.version <= 1 {
-            &EDAT_IV
-        } else {
-            &npd_header.digest
-        };
-        print!("Step 6 - IV: ");
-        for byte in iv {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        let (key_final, iv_final) = crypto_ctx
-            .generate_key(crypto_mode, npd_header.version, &encrypted_block_key, iv)
-            .unwrap();
-        print!("Step 6 - Final key: ");
-        for byte in &key_final {
-            print!("{:02X}", byte);
-        }
-        println!();
-        print!("Step 6 - Final IV: ");
-        for byte in &iv_final {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        let hash_final = crypto_ctx
-            .generate_hash(hash_mode, npd_header.version, &hash_key)
-            .unwrap();
-        print!("Step 6 - Final hash key: ");
-        for byte in &hash_final {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Step 7: Read encrypted data for first block
-        let metadata_section_size = if (edat_header.flags & EDAT_COMPRESSED_FLAG) != 0
-            || (edat_header.flags & EDAT_FLAG_0X20) != 0
-        {
-            0x20
-        } else {
-            0x10
-        };
-
-        let block_index = 1;
-        let block_start = METADATA_OFFSET + (block_index * metadata_section_size);
-        let block_end = block_start + metadata_section_size;
-
-        let encrypted_data = &sdat_data[block_start..block_end]; // First 32 bytes
-        print!("Step 7 - First 32 bytes of encrypted data: ");
-        for byte in encrypted_data {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Step 8: Decrypt first 32 bytes
-        let mut decrypted_data = [0u8; 32];
-        crypto_ctx
-            .aes_cbc_decrypt(&key_final, &iv_final, encrypted_data, &mut decrypted_data)
-            .unwrap();
-        print!("Step 8 - First 32 bytes decrypted: ");
-        for byte in &decrypted_data {
-            print!("{:02X}", byte);
-        }
-        println!();
-
-        // Expected result should start with AD EF 17 E1
-        let expected_start = [0xad, 0xef, 0x17, 0xe1];
-        let actual_start = &decrypted_data[0..4];
-
-        println!(
-            "Expected start: {:02X} {:02X} {:02X} {:02X}",
-            expected_start[0], expected_start[1], expected_start[2], expected_start[3]
-        );
-        println!(
-            "Actual start:   {:02X} {:02X} {:02X} {:02X}",
-            actual_start[0], actual_start[1], actual_start[2], actual_start[3]
-        );
-
-        if actual_start == expected_start {
-            println!("✅ SUCCESS! Crypto is working correctly!");
-        } else {
-            println!("❌ FAILURE! Crypto is still wrong.");
-
-            // Let's try some variations to debug
-            println!("\n=== Debugging Variations ===");
-
-            // Try with EDAT_KEY_0 instead of EDAT_KEY_1
-            println!("Trying with EDAT_KEY_0 instead of EDAT_KEY_1...");
-            let (key_final_v0, iv_final_v0) = crypto_ctx
-                .generate_key(crypto_mode, 0, &encrypted_block_key, iv)
-                .unwrap();
-            let mut decrypted_v0 = [0u8; 32];
-            crypto_ctx
-                .aes_cbc_decrypt(
-                    &key_final_v0,
-                    &iv_final_v0,
-                    encrypted_data,
-                    &mut decrypted_v0,
-                )
-                .unwrap();
-            print!("With EDAT_KEY_0: ");
-            for val in decrypted_v0.iter().take(4) {
-                print!("{:02X}", val);
-            }
-            println!();
-
-            // Try without the generate_key transformation (use encrypted_block_key directly)
-            println!("Trying without generate_key transformation...");
-            let mut decrypted_direct = [0u8; 32];
-            crypto_ctx
-                .aes_cbc_decrypt(
-                    &encrypted_block_key,
-                    iv,
-                    encrypted_data,
-                    &mut decrypted_direct,
-                )
-                .unwrap();
-            print!("Direct key: ");
-            for val in decrypted_direct.iter().take(4) {
-                print!("{:02X}", val);
-            }
-            println!();
-        }
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use std::fs;
+
+//     #[test]
+//     fn test_repack_sdat_basic() {
+//         // Test basic SDAT repacking functionality
+//         let input_data = b"Hello, SDAT World! This is test data for repacking.";
+//         let mut output_buffer = vec![0u8; 0x10000]; // 64KB buffer
+//         let filename = "test_file.sdat";
+
+//         let result = repack_sdat(input_data, &mut output_buffer, filename);
+//         assert!(result.is_ok(), "SDAT repacking should succeed");
+
+//         let bytes_written = result.unwrap();
+//         assert!(
+//             bytes_written > NpdHeader::SIZE + EdatHeader::SIZE,
+//             "Should write headers and data"
+//         );
+
+//         // Verify NPD header
+//         let npd_header = NpdHeader::parse(&output_buffer[0..NpdHeader::SIZE]).unwrap();
+//         assert_eq!(npd_header.magic, NpdHeader::MAGIC);
+//         assert_eq!(npd_header.version, 4);
+
+//         // Verify EDAT header
+//         let edat_header =
+//             EdatHeader::parse(&output_buffer[NpdHeader::SIZE..NpdHeader::SIZE + EdatHeader::SIZE])
+//                 .unwrap();
+//         assert!(edat_header.is_sdat());
+//         assert_eq!(edat_header.file_size, input_data.len() as u64);
+//         assert_eq!(edat_header.block_size, 0x8000);
+//     }
+
+//     #[test]
+//     fn test_repack_sdat_empty_input() {
+//         // Test with empty input data
+//         let input_data = b"";
+//         let mut output_buffer = vec![0u8; 0x1000];
+//         let filename = "empty.sdat";
+
+//         let result = repack_sdat(input_data, &mut output_buffer, filename);
+//         assert!(result.is_err(), "Empty input should fail");
+//     }
+
+//     #[test]
+//     fn test_repack_sdat_empty_filename() {
+//         // Test with empty filename
+//         let input_data = b"Test data";
+//         let mut output_buffer = vec![0u8; 0x1000];
+//         let filename = "";
+
+//         let result = repack_sdat(input_data, &mut output_buffer, filename);
+//         assert!(result.is_err(), "Empty filename should fail");
+//     }
+
+//     #[test]
+//     fn test_repack_sdat_buffer_too_small() {
+//         // Test with output buffer too small
+//         let input_data = b"This is test data that should require more space than available";
+//         let mut output_buffer = vec![0u8; 100]; // Very small buffer
+//         let filename = "test.sdat";
+
+//         let result = repack_sdat(input_data, &mut output_buffer, filename);
+//         assert!(result.is_err(), "Small buffer should fail");
+
+//         if let Err(SdatError::BufferTooSmall { needed, available }) = result {
+//             assert!(
+//                 needed > available,
+//                 "Should report correct buffer size requirements"
+//             );
+//         } else {
+//             panic!("Should return BufferTooSmall error");
+//         }
+//     }
+
+//     #[test]
+//     fn test_repack_unpack_roundtrip() {
+//         // Test that we can repack data and then unpack it to get the original data back
+//         let original_data = b"This is a test of the SDAT repack/unpack roundtrip functionality. It should work correctly and preserve the original data through the encryption/decryption process.";
+//         let mut packed_buffer = vec![0u8; 0x20000]; // 128KB buffer
+//         let mut unpacked_buffer = vec![0u8; original_data.len() + 1000]; // Extra space
+//         let filename = "roundtrip_test.sdat";
+
+//         // Repack the data
+//         let pack_result = repack_sdat(original_data, &mut packed_buffer, filename);
+//         assert!(pack_result.is_ok(), "Repacking should succeed");
+//         let packed_size = pack_result.unwrap();
+
+//         // Unpack the data
+//         let unpack_result = unpack_sdat(&packed_buffer[..packed_size], &mut unpacked_buffer);
+//         assert!(unpack_result.is_ok(), "Unpacking should succeed");
+//         let unpacked_size = unpack_result.unwrap();
+
+//         // Verify the data matches
+//         assert_eq!(
+//             unpacked_size,
+//             original_data.len(),
+//             "Unpacked size should match original"
+//         );
+//         assert_eq!(
+//             &unpacked_buffer[..unpacked_size],
+//             original_data,
+//             "Unpacked data should match original"
+//         );
+//     }
+
+//     #[test]
+//     fn test_repack_sdat_large_data() {
+//         // Test with data larger than one block
+//         let mut large_data = vec![0u8; 0x10000]; // 64KB data (larger than default 32KB block)
+//         for (i, byte) in large_data.iter_mut().enumerate() {
+//             *byte = (i % 256) as u8; // Fill with pattern
+//         }
+
+//         let mut output_buffer = vec![0u8; 0x30000]; // 192KB buffer
+//         let filename = "large_test.sdat";
+
+//         let result = repack_sdat(&large_data, &mut output_buffer, filename);
+//         assert!(result.is_ok(), "Large data repacking should succeed");
+
+//         let bytes_written = result.unwrap();
+//         assert!(
+//             bytes_written > NpdHeader::SIZE + EdatHeader::SIZE,
+//             "Should write headers and data"
+//         );
+
+//         // Verify we can unpack it back
+//         let mut unpacked_buffer = vec![0u8; large_data.len() + 1000];
+//         let unpack_result = unpack_sdat(&output_buffer[..bytes_written], &mut unpacked_buffer);
+//         assert!(unpack_result.is_ok(), "Large data unpacking should succeed");
+
+//         let unpacked_size = unpack_result.unwrap();
+//         assert_eq!(
+//             unpacked_size,
+//             large_data.len(),
+//             "Unpacked size should match original"
+//         );
+//         assert_eq!(
+//             &unpacked_buffer[..unpacked_size],
+//             &large_data,
+//             "Unpacked data should match original"
+//         );
+//     }
+
+//     #[test]
+//     fn test_unpack_sdat_with_sample_file() {
+//         // Load the sample SDAT file
+//         let sdat_data = match fs::read("src/tests/samples/sdat/object_T047.sdat") {
+//             Ok(data) => data,
+//             Err(_) => {
+//                 println!("Skipping test - sample SDAT file not found");
+//                 return;
+//             }
+//         };
+
+//         println!("SDAT file size: {} bytes", sdat_data.len());
+
+//         // Parse headers to verify our parsing works
+//         let npd_header = NpdHeader::parse(&sdat_data[0..NpdHeader::SIZE]).unwrap();
+//         let edat_header =
+//             EdatHeader::parse(&sdat_data[NpdHeader::SIZE..NpdHeader::SIZE + EdatHeader::SIZE])
+//                 .unwrap();
+
+//         println!("NPD version: {}", npd_header.version);
+//         println!("EDAT flags: 0x{:08X}", edat_header.flags);
+//         println!("EDAT block size: 0x{:08X}", edat_header.block_size);
+//         println!("EDAT file size: 0x{:016X}", edat_header.file_size);
+//         println!("Is SDAT: {}", edat_header.is_sdat());
+
+//         // Print dev_hash for debugging
+//         print!("Dev hash: ");
+//         for byte in &npd_header.dev_hash {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         print!("NPD digest: ");
+//         for byte in &npd_header.digest {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Generate and print SDAT key
+//         let sdat_key = crypto::generate_sdat_key(&npd_header.dev_hash);
+//         print!("SDAT key: ");
+//         for byte in &sdat_key {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Verify this is indeed an SDAT file
+//         assert!(edat_header.is_sdat(), "Sample file should be an SDAT file");
+
+//         // Create output buffer (allocate generous size)
+//         let mut output_buffer = vec![0u8; sdat_data.len() * 2];
+
+//         // Test unpacking
+//         let result = unpack_sdat(&sdat_data, &mut output_buffer);
+
+//         match result {
+//             Ok(size) => {
+//                 println!(
+//                     "Successfully unpacked SDAT file, output size: {} bytes",
+//                     size
+//                 );
+//                 assert!(size > 0, "Output size should be greater than 0");
+//                 assert!(
+//                     size <= output_buffer.len(),
+//                     "Output size should not exceed buffer size"
+//                 );
+
+//                 // Let's examine the decrypted content to see if it makes sense
+//                 println!("First 64 bytes of decrypted content:");
+//                 for (i, out_i) in output_buffer.iter().enumerate().take(64.min(size)) {
+//                     if i % 16 == 0 {
+//                         print!("\n{:04X}: ", i);
+//                     }
+//                     print!("{:02X} ", out_i);
+//                 }
+//                 println!();
+
+//                 // Check if we got the expected magic bytes from the correctly unpacked file
+//                 let expected_magic = [0xad, 0xef, 0x17, 0xe1];
+//                 let actual_magic = &output_buffer[0..4];
+
+//                 println!(
+//                     "Expected magic bytes: {:02X} {:02X} {:02X} {:02X}",
+//                     expected_magic[0], expected_magic[1], expected_magic[2], expected_magic[3]
+//                 );
+//                 println!(
+//                     "Actual magic bytes:   {:02X} {:02X} {:02X} {:02X}",
+//                     actual_magic[0], actual_magic[1], actual_magic[2], actual_magic[3]
+//                 );
+
+//                 if actual_magic == expected_magic {
+//                     println!("✅ DECRYPTION IS CORRECT! Magic bytes match.");
+//                 } else {
+//                     println!("❌ DECRYPTION IS WRONG! Magic bytes don't match.");
+//                     println!("   This confirms our crypto implementation has bugs.");
+//                 }
+//             }
+//             Err(e) => {
+//                 println!("SDAT unpacking failed: {}", e);
+//                 // For now, we'll allow this to fail since we're still implementing
+//                 // The important thing is that we can parse the headers correctly
+//                 // and the error is related to cryptographic operations, not basic parsing
+//                 match e {
+//                     SdatError::InvalidHash(_) => {
+//                         println!("Hash verification failed - this is expected for now");
+//                     }
+//                     SdatError::CryptoError(_) => {
+//                         println!("Crypto operation failed - this is expected for now");
+//                     }
+//                     _ => {
+//                         panic!("Unexpected error type: {}", e);
+//                     }
+//                 }
+//             }
+//         }
+//     }
+
+//     #[test]
+//     fn test_unpack_sdat_invalid_input() {
+//         // Test with empty input
+//         let mut output_buffer = [0u8; 100];
+//         let result = unpack_sdat(&[], &mut output_buffer);
+//         assert!(result.is_err());
+
+//         // Test with input too small for headers
+//         let small_input = [0u8; 10];
+//         let result = unpack_sdat(&small_input, &mut output_buffer);
+//         assert!(result.is_err());
+//     }
+
+//     #[test]
+//     fn test_unpack_sdat_invalid_magic() {
+//         // Create a buffer with invalid NPD magic
+//         let mut invalid_sdat = vec![0u8; METADATA_OFFSET]; // Size for NPD + EDAT headers
+//         invalid_sdat[0..4].copy_from_slice(b"XXXX"); // Invalid magic
+
+//         let mut output_buffer = [0u8; 100];
+//         let result = unpack_sdat(&invalid_sdat, &mut output_buffer);
+//         assert!(result.is_err());
+//     }
+
+//     #[test]
+//     fn test_unpack_sdat_non_sdat_file() {
+//         // Create a buffer with valid NPD header but no SDAT flag
+//         let mut non_sdat = vec![0u8; 0x90];
+//         non_sdat[0..4].copy_from_slice(b"NPD\0"); // Valid NPD magic
+//         // EDAT flags at offset 0x80 (NPD header size) - no SDAT flag set
+
+//         let mut output_buffer = [0u8; 100];
+//         let result = unpack_sdat(&non_sdat, &mut output_buffer);
+//         assert!(result.is_err());
+//     }
+
+//     #[test]
+//     fn test_header_parsing() {
+//         // Test NPD header parsing
+//         let mut npd_data = vec![0u8; NpdHeader::SIZE];
+//         npd_data[0..4].copy_from_slice(b"NPD\0");
+//         npd_data[4..8].copy_from_slice(&2u32.to_be_bytes()); // version
+//         npd_data[8..12].copy_from_slice(&1u32.to_be_bytes()); // license
+//         npd_data[12..16].copy_from_slice(&0u32.to_be_bytes()); // type
+
+//         let npd_result = NpdHeader::parse(&npd_data);
+//         assert!(npd_result.is_ok());
+
+//         let npd = npd_result.unwrap();
+//         assert_eq!(npd.magic, *b"NPD\0");
+//         assert_eq!(npd.version, 2);
+//         assert_eq!(npd.license, 1);
+//         assert_eq!(npd.type_, 0);
+
+//         // Test EDAT header parsing
+//         let mut edat_data = vec![0u8; EdatHeader::SIZE];
+//         edat_data[0..4].copy_from_slice(&EdatHeader::SDAT_FLAG.to_be_bytes()); // SDAT flag
+//         edat_data[4..8].copy_from_slice(&0x8000u32.to_be_bytes()); // block size
+//         edat_data[8..16].copy_from_slice(&1024u64.to_be_bytes()); // file size
+
+//         let edat_result = EdatHeader::parse(&edat_data);
+//         assert!(edat_result.is_ok());
+
+//         let edat = edat_result.unwrap();
+//         assert_eq!(edat.flags, EdatHeader::SDAT_FLAG);
+//         assert_eq!(edat.block_size, 0x8000);
+//         assert_eq!(edat.file_size, 1024);
+//         assert!(edat.is_sdat());
+//     }
+
+//     #[test]
+//     fn test_sdat_key_generation() {
+//         let dev_hash = [
+//             0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
+//             0xFF, 0x00,
+//         ];
+
+//         let sdat_key = crypto::generate_sdat_key(&dev_hash);
+
+//         // Verify the key is generated correctly (XOR with SDAT_KEY)
+//         for i in 0..16 {
+//             assert_eq!(sdat_key[i], dev_hash[i] ^ crypto::SDAT_KEY[i]);
+//         }
+//     }
+
+//     #[test]
+//     fn test_data_block_processor() {
+//         let processor = DataBlockProcessor::new();
+
+//         // Test metadata decryption
+//         let metadata = [
+//             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+//             0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
+//             0x1D, 0x1E, 0x1F, 0x20,
+//         ];
+
+//         let decrypted = processor.decrypt_metadata_section(&metadata);
+
+//         // Verify the decryption follows the expected XOR pattern
+//         assert_eq!(
+//             decrypted[0],
+//             metadata[0x0C] ^ metadata[0x08] ^ metadata[0x10]
+//         );
+//         assert_eq!(
+//             decrypted[1],
+//             metadata[0x0D] ^ metadata[0x09] ^ metadata[0x11]
+//         );
+//         // ... and so on
+//     }
+
+//     #[test]
+//     fn test_debug_sdat_crypto() {
+//         // Load the sample SDAT file for detailed crypto debugging
+//         let sdat_data = match fs::read("src/tests/samples/sdat/object_T047.sdat") {
+//             Ok(data) => data,
+//             Err(_) => {
+//                 println!("Skipping debug test - sample SDAT file not found");
+//                 return;
+//             }
+//         };
+
+//         // Parse headers
+//         let npd_header = NpdHeader::parse(&sdat_data[0..NpdHeader::SIZE]).unwrap();
+//         let edat_header =
+//             EdatHeader::parse(&sdat_data[NpdHeader::SIZE..NpdHeader::SIZE + EdatHeader::SIZE])
+//                 .unwrap();
+
+//         println!("=== SDAT Debug Info ===");
+//         println!("NPD version: {}", npd_header.version);
+//         println!("EDAT flags: 0x{:08X}", edat_header.flags);
+
+//         // Analyze the flags
+//         println!("Flag analysis:");
+//         println!(
+//             "  SDAT_FLAG (0x01000000): {}",
+//             (edat_header.flags & 0x01000000) != 0
+//         );
+//         println!(
+//             "  COMPRESSED_FLAG (0x00000001): {}",
+//             (edat_header.flags & EDAT_COMPRESSED_FLAG) != 0
+//         );
+//         println!(
+//             "  FLAG_0x02 (0x00000002): {}",
+//             (edat_header.flags & EDAT_FLAG_0X02) != 0
+//         );
+//         println!(
+//             "  ENCRYPTED_KEY_FLAG (0x00000008): {}",
+//             (edat_header.flags & EDAT_ENCRYPTED_KEY_FLAG) != 0
+//         );
+//         println!(
+//             "  FLAG_0x10 (0x00000010): {}",
+//             (edat_header.flags & EDAT_FLAG_0X10) != 0
+//         );
+//         println!(
+//             "  FLAG_0x20 (0x00000020): {}",
+//             (edat_header.flags & EDAT_FLAG_0X20) != 0
+//         );
+//         println!(
+//             "  DEBUG_DATA_FLAG (0x80000000): {}",
+//             (edat_header.flags & EDAT_DEBUG_DATA_FLAG) != 0
+//         );
+
+//         // Generate SDAT key
+//         let sdat_key = crypto::generate_sdat_key(&npd_header.dev_hash);
+//         print!("SDAT key: ");
+//         for byte in &sdat_key {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Calculate block information
+//         let block_num = edat_header
+//             .file_size
+//             .div_ceil(edat_header.block_size as u64) as usize;
+//         let metadata_section_size = if (edat_header.flags & EDAT_COMPRESSED_FLAG) != 0
+//             || (edat_header.flags & EDAT_FLAG_0X20) != 0
+//         {
+//             0x20
+//         } else {
+//             0x10
+//         };
+
+//         println!("Block count: {}", block_num);
+//         println!("Metadata section size: 0x{:02X}", metadata_section_size);
+//         println!("Metadata offset: 0x{:02X}", METADATA_OFFSET);
+
+//         // Read first block metadata
+//         let metadata_buffer = &sdat_data[METADATA_OFFSET..METADATA_OFFSET + metadata_section_size];
+//         print!("First block metadata: ");
+//         for byte in metadata_buffer {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Try to parse first block metadata
+//         let block_processor = DataBlockProcessor::new();
+//         match block_processor.parse_block_metadata(
+//             &sdat_data[METADATA_OFFSET..METADATA_OFFSET + block_num * metadata_section_size],
+//             0,
+//             &edat_header,
+//             &npd_header,
+//             METADATA_OFFSET as u64,
+//             block_num,
+//         ) {
+//             Ok(metadata) => {
+//                 println!("First block metadata parsed successfully:");
+//                 println!("  Offset: 0x{:016X}", metadata.offset);
+//                 println!("  Length: 0x{:08X}", metadata.length);
+//                 println!("  Compression end: 0x{:08X}", metadata.compression_end);
+//                 print!("  Hash: ");
+//                 for byte in &metadata.hash {
+//                     print!("{:02X}", byte);
+//                 }
+//                 println!();
+//             }
+//             Err(e) => {
+//                 println!("Failed to parse first block metadata: {}", e);
+//             }
+//         }
+//     }
+
+//     #[test]
+//     fn test_crypto_step_by_step_debug() {
+//         // Load the sample SDAT file for step-by-step crypto debugging
+//         let sdat_data = match fs::read("src/tests/samples/sdat/object_T047.sdat") {
+//             Ok(data) => data,
+//             Err(_) => {
+//                 println!("Skipping crypto debug test - sample SDAT file not found");
+//                 return;
+//             }
+//         };
+
+//         // Parse headers
+//         let npd_header = NpdHeader::parse(&sdat_data[0..NpdHeader::SIZE]).unwrap();
+//         let edat_header =
+//             EdatHeader::parse(&sdat_data[NpdHeader::SIZE..NpdHeader::SIZE + EdatHeader::SIZE])
+//                 .unwrap();
+
+//         println!("=== Step-by-Step Crypto Debug ===");
+
+//         // Step 1: Generate SDAT key
+//         let sdat_key = crypto::generate_sdat_key(&npd_header.dev_hash);
+//         print!("Step 1 - SDAT key: ");
+//         for byte in &sdat_key {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Step 2: Generate block key for block 0
+//         let block_key = crypto::generate_block_key(0, &npd_header.dev_hash, npd_header.version);
+//         print!("Step 2 - Block key: ");
+//         for byte in &block_key {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Step 3: Encrypt block key with SDAT key (AES-ECB)
+//         let crypto_ctx = CryptoContext::new();
+//         let mut encrypted_block_key = [0u8; 16];
+//         crypto_ctx
+//             .aes_ecb_encrypt(&sdat_key, &block_key, &mut encrypted_block_key)
+//             .unwrap();
+//         print!("Step 3 - Encrypted block key: ");
+//         for byte in &encrypted_block_key {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Step 4: Generate hash key (encrypt encrypted block key again for FLAG_0x10)
+//         let hash_key = if (edat_header.flags & EDAT_FLAG_0X10) != 0 {
+//             let mut hash = [0u8; 16];
+//             crypto_ctx
+//                 .aes_ecb_encrypt(&sdat_key, &encrypted_block_key, &mut hash)
+//                 .unwrap();
+//             hash
+//         } else {
+//             encrypted_block_key
+//         };
+//         print!("Step 4 - Hash key: ");
+//         for byte in &hash_key {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Step 5: Setup crypto and hash modes
+//         let crypto_mode = if (edat_header.flags & EDAT_FLAG_0X02) == 0 {
+//             0x2
+//         } else {
+//             0x1
+//         };
+//         let hash_mode = if (edat_header.flags & EDAT_FLAG_0X10) == 0 {
+//             0x02
+//         } else if (edat_header.flags & EDAT_FLAG_0X20) == 0 {
+//             0x04
+//         } else {
+//             0x01
+//         };
+
+//         // Apply encryption flags
+//         let crypto_mode = if (edat_header.flags & EDAT_ENCRYPTED_KEY_FLAG) != 0 {
+//             crypto_mode | 0x10000000
+//         } else {
+//             crypto_mode
+//         };
+
+//         let hash_mode = if (edat_header.flags & EDAT_ENCRYPTED_KEY_FLAG) != 0 {
+//             hash_mode | 0x10000000
+//         } else {
+//             hash_mode
+//         };
+
+//         println!("Step 5 - Crypto mode: 0x{:08X}", crypto_mode);
+//         println!("Step 5 - Hash mode: 0x{:08X}", hash_mode);
+
+//         // Step 6: Generate final keys using generate_key and generate_hash
+//         let iv = if npd_header.version <= 1 {
+//             &EDAT_IV
+//         } else {
+//             &npd_header.digest
+//         };
+//         print!("Step 6 - IV: ");
+//         for byte in iv {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         let (key_final, iv_final) = crypto_ctx
+//             .generate_key(crypto_mode, npd_header.version, &encrypted_block_key, iv)
+//             .unwrap();
+//         print!("Step 6 - Final key: ");
+//         for byte in &key_final {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+//         print!("Step 6 - Final IV: ");
+//         for byte in &iv_final {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         let hash_final = crypto_ctx
+//             .generate_hash(hash_mode, npd_header.version, &hash_key)
+//             .unwrap();
+//         print!("Step 6 - Final hash key: ");
+//         for byte in &hash_final {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Step 7: Read encrypted data for first block
+//         let metadata_section_size = if (edat_header.flags & EDAT_COMPRESSED_FLAG) != 0
+//             || (edat_header.flags & EDAT_FLAG_0X20) != 0
+//         {
+//             0x20
+//         } else {
+//             0x10
+//         };
+
+//         let block_index = 1;
+//         let block_start = METADATA_OFFSET + (block_index * metadata_section_size);
+//         let block_end = block_start + metadata_section_size;
+
+//         let encrypted_data = &sdat_data[block_start..block_end]; // First 32 bytes
+//         print!("Step 7 - First 32 bytes of encrypted data: ");
+//         for byte in encrypted_data {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Step 8: Decrypt first 32 bytes
+//         let mut decrypted_data = [0u8; 32];
+//         crypto_ctx
+//             .aes_cbc_decrypt(&key_final, &iv_final, encrypted_data, &mut decrypted_data)
+//             .unwrap();
+//         print!("Step 8 - First 32 bytes decrypted: ");
+//         for byte in &decrypted_data {
+//             print!("{:02X}", byte);
+//         }
+//         println!();
+
+//         // Expected result should start with AD EF 17 E1
+//         let expected_start = [0xad, 0xef, 0x17, 0xe1];
+//         let actual_start = &decrypted_data[0..4];
+
+//         println!(
+//             "Expected start: {:02X} {:02X} {:02X} {:02X}",
+//             expected_start[0], expected_start[1], expected_start[2], expected_start[3]
+//         );
+//         println!(
+//             "Actual start:   {:02X} {:02X} {:02X} {:02X}",
+//             actual_start[0], actual_start[1], actual_start[2], actual_start[3]
+//         );
+
+//         if actual_start == expected_start {
+//             println!("✅ SUCCESS! Crypto is working correctly!");
+//         } else {
+//             println!("❌ FAILURE! Crypto is still wrong.");
+
+//             // Let's try some variations to debug
+//             println!("\n=== Debugging Variations ===");
+
+//             // Try with EDAT_KEY_0 instead of EDAT_KEY_1
+//             println!("Trying with EDAT_KEY_0 instead of EDAT_KEY_1...");
+//             let (key_final_v0, iv_final_v0) = crypto_ctx
+//                 .generate_key(crypto_mode, 0, &encrypted_block_key, iv)
+//                 .unwrap();
+//             let mut decrypted_v0 = [0u8; 32];
+//             crypto_ctx
+//                 .aes_cbc_decrypt(
+//                     &key_final_v0,
+//                     &iv_final_v0,
+//                     encrypted_data,
+//                     &mut decrypted_v0,
+//                 )
+//                 .unwrap();
+//             print!("With EDAT_KEY_0: ");
+//             for val in decrypted_v0.iter().take(4) {
+//                 print!("{:02X}", val);
+//             }
+//             println!();
+
+//             // Try without the generate_key transformation (use encrypted_block_key directly)
+//             println!("Trying without generate_key transformation...");
+//             let mut decrypted_direct = [0u8; 32];
+//             crypto_ctx
+//                 .aes_cbc_decrypt(
+//                     &encrypted_block_key,
+//                     iv,
+//                     encrypted_data,
+//                     &mut decrypted_direct,
+//                 )
+//                 .unwrap();
+//             print!("Direct key: ");
+//             for val in decrypted_direct.iter().take(4) {
+//                 print!("{:02X}", val);
+//             }
+//             println!();
+//         }
+//     }
+// }

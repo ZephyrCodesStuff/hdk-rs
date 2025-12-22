@@ -1,5 +1,5 @@
 use byteorder::{BigEndian, ReadBytesExt};
-use flate2::{Decompress, FlushDecompress, read::ZlibDecoder};
+use flate2::{Decompress, read::ZlibDecoder};
 use std::io::{self, Read};
 
 use super::EDGE_ZLIB_CHUNK_HEADER_SIZE;

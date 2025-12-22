@@ -126,11 +126,7 @@ mod blowfish_tests {
 
     use crate::blowfish::Blowfish;
     use cipher::generic_array::GenericArray;
-    use cipher::{
-        BlockDecrypt, BlockDecryptMut, BlockEncrypt, KeyInit, KeyIvInit, StreamCipher,
-        StreamCipherSeek,
-    };
-    use ctr::Ctr64BE;
+    use cipher::{BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit, StreamCipher};
 
     #[test]
     fn test_blowfish_basic_roundtrip() {
@@ -422,7 +418,7 @@ mod blowfish_tests {
             let base = u64::from_be_bytes(iv);
             for i in 0..blocks {
                 let ctr = base.wrapping_add(i as u64);
-                let mut block = GenericArray::from(ctr.to_be_bytes());
+                let block = GenericArray::from(ctr.to_be_bytes());
                 let mut to_encrypt = block.clone();
                 cipher.encrypt_block(&mut to_encrypt);
                 out.extend_from_slice(to_encrypt.as_slice());

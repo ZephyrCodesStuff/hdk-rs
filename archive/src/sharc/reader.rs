@@ -2,8 +2,6 @@ use aes::Aes256;
 use aes::cipher::{KeyIvInit, StreamCipher};
 use binrw::{BinReaderExt, Endian};
 use ctr::Ctr128BE;
-use ctr::cipher::consts::U16;
-use ctr::cipher::generic_array::GenericArray;
 use std::convert::TryFrom;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 

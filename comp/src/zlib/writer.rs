@@ -2,7 +2,7 @@ use byteorder::{BigEndian, WriteBytesExt};
 use flate2::{Compression, write::DeflateEncoder};
 use std::io::{self, Write};
 
-use super::{EDGE_ZLIB_CHUNK_HEADER_SIZE, EDGE_ZLIB_CHUNK_SIZE_MAX};
+use super::EDGE_ZLIB_CHUNK_SIZE_MAX;
 
 pub struct SegmentedZlibWriter<W: Write> {
     inner: Option<W>,

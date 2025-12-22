@@ -85,7 +85,7 @@ impl<W: Write> SharcWriter<W> {
     where
         Rd: Read,
     {
-        let mut uncompressed_size: u32 = 0;
+        let uncompressed_size;
 
         let data: Vec<u8> = match compression {
             CompressionType::None => {

@@ -13,9 +13,9 @@ use secure::xtea::modes::XteaPS3;
 use super::structs::{
     SharcEntry, SharcEntryMetadata, SharcHeader, SharcInnerHeader, SharcPreamble,
 };
-use crate::structs::{ARCHIVE_MAGIC, CompressionType, Endianness}; // Your common structs
+use crate::structs::{ARCHIVE_MAGIC, CompressionType, Endianness};
 
-pub struct SharcArchive<R: Read + Seek> {
+pub struct SharcReader<R: Read + Seek> {
     inner: R,
     pub header: SharcHeader,
     entries: Vec<SharcEntry>,
@@ -23,7 +23,7 @@ pub struct SharcArchive<R: Read + Seek> {
     data_start_offset: u64,
 }
 
-impl<R: Read + Seek> SharcArchive<R> {
+impl<R: Read + Seek> SharcReader<R> {
     pub fn open(mut reader: R, key: [u8; 32]) -> io::Result<Self> {
         // 1. Detect Endianness via Magic
         let magic_val = reader.read_le::<u32>().map_err(|e| {

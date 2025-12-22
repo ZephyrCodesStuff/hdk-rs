@@ -12,3 +12,6 @@ pub type BlowfishCbcDec = cbc::Decryptor<crate::blowfish::Blowfish>;
 
 pub type BlowfishEcb = ecb::Encryptor<crate::blowfish::Blowfish>;
 pub type BlowfishEcbDec = ecb::Decryptor<crate::blowfish::Blowfish>;
+
+// Type alias for the Blowfish CTR mode used for PS3 files
+pub type BlowfishPS3 = ctr::Ctr64BE<crate::blowfish::Blowfish>;

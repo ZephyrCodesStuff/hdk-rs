@@ -25,6 +25,7 @@
 
 - [@I-Knight-I](https://github.com/I-Knight-I) for their massive help with the cryptographic implementations, the compression algorithms and other miscellaneous bits of knowledge
 - [@AgentDark447](https://github.com/GitHubProUser67) for their open-source software, allowing me to learn about the SHARC archive format
+- @hykem for their efforts in reverse engineering the PS3 file formats such as NPD and SCE
 
 ## 📖 Overview
 

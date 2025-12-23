@@ -46,6 +46,17 @@ Unlike legacy C tools, `hdk-rs` leverages Rust's type system and traits. Readers
 | **[`hdk-firmware`](./hdk-firmware)** | Handle **PUP** containers and **SCE** file encryption/decryption (used in system updates like `PS3UPDAT.PUP`). |
 | **[`hdk-comp`](./hdk-comp)** | Implementations of **EdgeLZMA** and **EdgeZlib**. Deeply integrated with IO traits to allow streaming composition with crypto modules. |
 
+## 💿 Installation
+
+The crates are currently hosted on GitHub. To use them, add the specific crate you need to your Cargo.toml using a git dependency. Since this is a monorepo, use the same repository URL for any crate in the ecosystem.
+
+```toml
+[dependencies]
+# Example: Using the crypto and archive modules
+hdk-secure = { git = "https://github.com/ZephyrCodesStuff/hdk-rs", branch = "main" }
+hdk-archive = { git = "https://github.com/ZephyrCodesStuff/hdk-rs", branch = "main" }
+```
+
 ## 💛 Contributions
 
 Contributions are welcome! Since this project aims for stability and correctness:

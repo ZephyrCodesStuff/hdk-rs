@@ -34,29 +34,17 @@ Unlike legacy C tools, `hdk-rs` leverages Rust's type system and traits. Readers
 
 > ⚠️ **Status: Work In Progress** > This library is currently under active construction. Expect breaking changes. The code is strictly linted to ensure high quality as the API stabilizes.
 
-## ✨ Features
+## 📦 The Ecosystem
 
 `hdk-rs` is designed to be **modular**. You only pay for what you use. The library is split into individual crates, allowing you to only include the logic required for your specific needs.
 
-| Module | Feature Flag | Description |
+| Crate | Feature Flag | Description |
 | :--- | :--- | :--- |
-| **Secure** | `secure` | Implementation of algorithms from Sony's `libsecure`. Supports **XTEA** and **Blowfish**. Fully compatible with the [RustCrypto](https://github.com/RustCrypto) ecosystem. |
-| **Archive** | `archive` | Reader/Writer support for **BAR** and **SHARC** PlayStation Home archives. Implements standard IO traits for maximum flexibility. |
-| **SDAT** | `sdat` | Full support for the Sony **SDATA** format. Unpack, repack, and stream data efficiently. |
-| **Firmware** | `firmware` | Handle **PUP** containers and **SCE** file encryption/decryption (used in system updates like `PS3UPDAT.PUP`). |
-| **Compression** | `comp` | Implementations of **EdgeLZMA** and **EdgeZlib**. Deeply integrated with IO traits to allow streaming composition with crypto modules. |
-
-## 📦 The Ecosystem
-
-`hdk-rs` is structured as a collection of scoped crates. You pick the individual crates you need for your specific needs.
-
-| Crate | Description |
-| :--- | :--- |
-| **[`hdk-secure`](./hdk-secure)** | Sony's `libsecure` implementation. XTEA, Blowfish, and crypto helpers. |
-| **[`hdk-archive`](./hdk-archive)** | Readers/Writers for **BAR** and **SHARC** archives. |
-| **[`hdk-sdat`](./hdk-sdat)** | **SDATA** format handling for unpacking, repacking, and streaming. |
-| **[`hdk-firmware`](./hdk-firmware)** | **PUP** container and **SCE** file encryption/decryption. |
-| **[`hdk-comp`](./hdk-comp)** | **EdgeLZMA** and **EdgeZlib** compression streams. |
+| **[`hdk-secure`](./hdk-secure)** | `secure` | Implementation of algorithms from Sony's `libsecure`. Supports **XTEA** and **Blowfish**. Fully compatible with the [RustCrypto](https://github.com/RustCrypto) ecosystem. |
+| **[`hdk-archive`](./hdk-archive)** | `archive` | Reader/Writer support for **BAR** and **SHARC** PlayStation Home archives. Implements standard IO traits for maximum flexibility. |
+| **[`hdk-sdat`](./hdk-sdat)** | `sdat` | Full support for the Sony **SDATA** format. Unpack, repack, and stream data efficiently. |
+| **[`hdk-firmware`](./hdk-firmware)** | `firmware` | Handle **PUP** containers and **SCE** file encryption/decryption (used in system updates like `PS3UPDAT.PUP`). |
+| **[`hdk-comp`](./hdk-comp)** | `comp` | Implementations of **EdgeLZMA** and **EdgeZlib**. Deeply integrated with IO traits to allow streaming composition with crypto modules. |
 
 ## 💛 Contributions
 

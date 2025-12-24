@@ -46,7 +46,7 @@ Unlike legacy C tools, `hdk-rs` leverages Rust's type system and traits. Readers
 | **[`hdk-sdat`](./hdk-sdat)** | Full support for the Sony **SDATA** format. Unpack, repack, and stream data efficiently. |
 | **[`hdk-firmware`](./hdk-firmware)** | Handle **PUP** containers and **SCE** file encryption/decryption (used in system updates like `PS3UPDAT.PUP`). |
 | **[`hdk-comp`](./hdk-comp)** | Implementations of **EdgeLZMA** and **EdgeZlib**. Deeply integrated with IO traits to allow streaming composition with crypto modules. |
-| **[`hdk-mdl`](./hdk-mdl)** | Read and write PlayStation Home **MDL** (`HM`) model files. Supports export to JSON for easy inspection, via the `export` feature flag. |
+| **[`hdk-mdl`](./hdk-mdl)** | Read PlayStation Home **MDL** (`HM`) model files. Supports export to JSON for easy inspection, via the `export` feature flag. |
 
 ## 💿 Installation
 

@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut f = File::open(&input)?;
 
         // 1. One-shot read: Parses headers, follows pointers, and loads buffers automatically.
-        let model: Model = Model::read(&mut f)?;
+        let model: Model = Model::read_be(&mut f)?;
 
         // 2. Convert to friendly JSON format (decoding raw buffers to floats/u16s)
         let export = model.to_export();

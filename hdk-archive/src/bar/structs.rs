@@ -1,5 +1,6 @@
 use crate::structs::CompressionType;
 use binrw::prelude::*;
+use hdk_secure::hash::AfsHash;
 
 #[derive(BinRead, Debug, Clone)]
 #[br(little)]
@@ -24,12 +25,14 @@ pub struct BarEntry {
 }
 
 impl BarEntry {
-    #[must_use] 
+    pub const fn name_hash(&self) -> AfsHash {
+        AfsHash(self.name_hash)
+    }
+
     pub const fn offset(&self) -> u32 {
         self.offset_and_comp.0
     }
 
-    #[must_use] 
     pub fn compression(&self) -> CompressionType {
         let raw = self.offset_and_comp.1;
         CompressionType::try_from(raw).unwrap_or(CompressionType::None)
@@ -39,7 +42,7 @@ impl BarEntry {
 /// Metadata view
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BarEntryMetadata {
-    pub name_hash: i32,
+    pub name_hash: AfsHash,
     pub offset: u32,
     pub compression: CompressionType,
     pub uncompressed_size: u32,
@@ -49,7 +52,7 @@ pub struct BarEntryMetadata {
 impl From<&BarEntry> for BarEntryMetadata {
     fn from(entry: &BarEntry) -> Self {
         Self {
-            name_hash: entry.name_hash,
+            name_hash: AfsHash(entry.name_hash),
             offset: entry.offset(),
             compression: entry.compression(),
             uncompressed_size: entry.uncompressed_size,

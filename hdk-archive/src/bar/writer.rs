@@ -7,7 +7,7 @@ use crate::crypto::{DEFAULT_KEY, SIGNATURE_KEY};
 use ctr::Ctr64BE;
 use ctr::cipher::KeyIvInit;
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
-use hdk_secure::{blowfish::Blowfish, writer::CryptoWriter};
+use hdk_secure::{blowfish::Blowfish, hash::AfsHash, writer::CryptoWriter};
 
 use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType};
 
@@ -18,7 +18,7 @@ pub struct BarWriter<W: Write> {
 }
 
 struct BarEntryToWrite {
-    name_hash: i32,
+    name_hash: AfsHash,
     compression: CompressionType,
     uncompressed_size: u32,
     compressed_size: u32,
@@ -47,7 +47,7 @@ impl<W: Write + Seek> BarWriter<W> {
 
     pub fn add_entry(
         &mut self,
-        name_hash: i32,
+        name_hash: AfsHash,
         compression: CompressionType,
         data: &[u8],
     ) -> io::Result<()> {
@@ -57,7 +57,7 @@ impl<W: Write + Seek> BarWriter<W> {
 
     pub fn add_entry_from_reader<R: Read + ?Sized>(
         &mut self,
-        name_hash: i32,
+        name_hash: AfsHash,
         compression: CompressionType,
         reader: &mut R,
     ) -> io::Result<()> {
@@ -157,7 +157,7 @@ impl<W: Write + Seek> BarWriter<W> {
 
         // Write ToC
         for entry in &self.entries {
-            self.inner.write_i32::<LittleEndian>(entry.name_hash)?;
+            self.inner.write_i32::<LittleEndian>(entry.name_hash.0)?;
 
             let comp_val: u8 = entry.compression.into();
             let val = (entry.offset & 0xFFFFFFFC) | u32::from(comp_val);
@@ -173,52 +173,53 @@ impl<W: Write + Seek> BarWriter<W> {
         // offsets and file_count are known (the IV depends on these values).
         for entry in &mut self.entries {
             if entry.compression == CompressionType::Encrypted
-                && let Some(checksum) = entry.sha1 {
-                    // Forge IV
-                    let iv = crate::crypto::forge_iv(
-                        u64::from(file_count),
-                        u64::from(entry.uncompressed_size),
-                        u64::from(entry.compressed_size),
-                        u64::from(entry.offset),
-                        0, // timestamp currently 0
-                    );
+                && let Some(checksum) = entry.sha1
+            {
+                // Forge IV
+                let iv = crate::crypto::forge_iv(
+                    u64::from(file_count),
+                    u64::from(entry.uncompressed_size),
+                    u64::from(entry.compressed_size),
+                    u64::from(entry.offset),
+                    0, // timestamp currently 0
+                );
 
-                    // Build head: 4B fourcc (zeros) + 20B checksum
-                    let mut head = Vec::new();
-                    head.extend_from_slice(&[0u8; 4]);
-                    head.extend_from_slice(&checksum);
+                // Build head: 4B fourcc (zeros) + 20B checksum
+                let mut head = Vec::new();
+                head.extend_from_slice(&[0u8; 4]);
+                head.extend_from_slice(&checksum);
 
-                    // Encrypt head with SIGNATURE_KEY using CryptoWriter
-                    let mut cw_head = CryptoWriter::new(
-                        Vec::new(),
-                        Ctr64BE::<Blowfish>::new(&SIGNATURE_KEY.into(), &iv.into()),
-                    );
-                    cw_head.write_all(&head)?;
-                    let head_enc = cw_head.into_inner();
+                // Encrypt head with SIGNATURE_KEY using CryptoWriter
+                let mut cw_head = CryptoWriter::new(
+                    Vec::new(),
+                    Ctr64BE::<Blowfish>::new(&SIGNATURE_KEY.into(), &iv.into()),
+                );
+                cw_head.write_all(&head)?;
+                let head_enc = cw_head.into_inner();
 
-                    // Encrypt body with DEFAULT_KEY using IV + 3 via CryptoWriter
-                    let mut iv_as_u64 = u64::from_be_bytes(iv);
-                    iv_as_u64 = iv_as_u64.wrapping_add(3);
-                    let iv_body = iv_as_u64.to_be_bytes();
+                // Encrypt body with DEFAULT_KEY using IV + 3 via CryptoWriter
+                let mut iv_as_u64 = u64::from_be_bytes(iv);
+                iv_as_u64 = iv_as_u64.wrapping_add(3);
+                let iv_body = iv_as_u64.to_be_bytes();
 
-                    let mut cw_body = CryptoWriter::new(
-                        Vec::new(),
-                        Ctr64BE::<Blowfish>::new(&DEFAULT_KEY.into(), &iv_body.into()),
-                    );
-                    cw_body.write_all(&entry.data)?;
-                    let body_enc = cw_body.into_inner();
+                let mut cw_body = CryptoWriter::new(
+                    Vec::new(),
+                    Ctr64BE::<Blowfish>::new(&DEFAULT_KEY.into(), &iv_body.into()),
+                );
+                cw_body.write_all(&entry.data)?;
+                let body_enc = cw_body.into_inner();
 
-                    // Body fourcc (4 bytes) - kept raw (zeros)
-                    let body_fourcc = [0u8; 4];
+                // Body fourcc (4 bytes) - kept raw (zeros)
+                let body_fourcc = [0u8; 4];
 
-                    // Compose final data: encrypted head, body_fourcc, encrypted body
-                    let mut final_data = Vec::new();
-                    final_data.extend_from_slice(&head_enc);
-                    final_data.extend_from_slice(&body_fourcc);
-                    final_data.extend_from_slice(&body_enc);
+                // Compose final data: encrypted head, body_fourcc, encrypted body
+                let mut final_data = Vec::new();
+                final_data.extend_from_slice(&head_enc);
+                final_data.extend_from_slice(&body_fourcc);
+                final_data.extend_from_slice(&body_enc);
 
-                    entry.data = final_data;
-                }
+                entry.data = final_data;
+            }
 
             self.inner.write_all(&entry.data)?;
 

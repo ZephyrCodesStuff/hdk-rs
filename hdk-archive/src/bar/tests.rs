@@ -201,6 +201,8 @@ fn test_encrypted_entry_readback() {
 
 #[test]
 fn test_encrypted_entry_write_and_read() {
+    use hdk_secure::hash::AfsHash;
+
     // Create writer, add encrypted entry, finish and read back
     use crate::bar::writer::BarWriter;
     use std::io::Cursor;
@@ -209,7 +211,7 @@ fn test_encrypted_entry_write_and_read() {
     let mut writer = BarWriter::new(Cursor::new(Vec::new()));
     writer
         .add_entry(
-            0xCAFEBABE_u32 as i32,
+            AfsHash::from_str("encrypted_file"),
             crate::structs::CompressionType::Encrypted,
             content,
         )

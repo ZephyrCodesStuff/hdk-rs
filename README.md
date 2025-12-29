@@ -8,8 +8,10 @@
 
   <p>
     <a href="https://github.com/ZephyrCodesStuff/hdk-rs/actions"><img src="https://img.shields.io/github/actions/workflow/status/ZephyrCodesStuff/hdk-rs/clippy.yml?branch=main&style=flat-square" alt="Build Status"></a>
+    <!-- We are not currently on crates.io
     <a href="https://crates.io/crates/hdk-rs"><img src="https://img.shields.io/crates/v/hdk-rs?style=flat-square" alt="Crates.io version"></a>
     <a href="https://docs.rs/hdk-rs"><img src="https://img.shields.io/docsrs/hdk-rs?style=flat-square" alt="Docs.rs"></a>
+    -->
     <a href="#license"><img src="https://img.shields.io/badge/license-AGPLv3-blue?style=flat-square" alt="License"></a>
   </p>
 

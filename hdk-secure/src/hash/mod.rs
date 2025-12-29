@@ -8,14 +8,37 @@ impl AfsHash {
         Self(afs_hash(s.chars()))
     }
 
+    /// Create an AfsHash from a file path.
+    ///
+    /// If the file name is already a valid uppercase hex hash, it will be used directly.
+    /// Otherwise, the hash will be computed from the full path string.
     pub fn new_from_path(path: &Path) -> Self {
         let s = path.to_str().unwrap_or_default();
+
+        // Check if file name is already a hash in uppercase hex
+        //
+        // WARN: This might shadow actual file names that just so happen to be valid hashes
+        if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
+            && file_name.len() == 8
+            && file_name
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && c.is_uppercase())
+        {
+            // If it is, parse it directly as a hash
+            if let Ok(hash) = i32::from_str_radix(file_name, 16) {
+                return Self(hash);
+            }
+        }
+
+        // Otherwise, compute the hash from the path string
         Self(afs_hash(s.chars()))
     }
 }
 
 impl core::fmt::Display for AfsHash {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // TODO: Investigate why this currently works..?
+        //       (AfsHash is signed but we print as unsigned)
         write!(f, "{:08X}", self.0 as u32)
     }
 }

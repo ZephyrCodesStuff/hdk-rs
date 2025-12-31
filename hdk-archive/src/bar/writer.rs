@@ -3,7 +3,6 @@ use enumflags2::BitFlags;
 use flate2::{Compression, write::ZlibEncoder};
 use std::io::{self, Cursor, Read, Write};
 
-use crate::crypto::{DEFAULT_KEY, SIGNATURE_KEY};
 use ctr::Ctr64BE;
 use ctr::cipher::KeyIvInit;
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
@@ -26,6 +25,16 @@ pub struct BarWriter<W: Write> {
     ///
     /// Each entry holds its data in-memory until `finish()` is called.
     entries: Vec<BarEntryToWrite>,
+
+    /// The default Blowfish key used for encrypting file bodies.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    default_key: [u8; 32],
+
+    /// The signature Blowfish key used for encrypting file headers.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    signature_key: [u8; 32],
 }
 
 struct BarEntryToWrite {
@@ -43,12 +52,37 @@ struct BarEntryToWrite {
 }
 
 impl<W: Write> BarWriter<W> {
-    pub fn new(inner: W) -> Self {
+    /// Create a new BAR archive writer.
+    ///
+    /// # Arguments
+    ///
+    /// * `inner` - The underlying writer to write the archive to.
+    /// * `default_key` - The Blowfish key used for encrypting file bodies.
+    /// * `signature_key` - The Blowfish key used for encrypting file headers.
+    pub fn new(inner: W, default_key: [u8; 32], signature_key: [u8; 32]) -> Self {
         Self {
             inner,
             flags: BitFlags::empty(), // Default no flags
             entries: Vec::new(),
+            default_key,
+            signature_key,
         }
+    }
+
+    /// Set the default Blowfish key used for encrypting file bodies.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    pub const fn with_default_key(mut self, default_key: [u8; 32]) -> Self {
+        self.default_key = default_key;
+        self
+    }
+
+    /// Set the signature Blowfish key used for encrypting file headers.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    pub const fn with_signature_key(mut self, signature_key: [u8; 32]) -> Self {
+        self.signature_key = signature_key;
+        self
     }
 
     pub const fn with_flags(mut self, flags: BitFlags<ArchiveFlags>) -> Self {
@@ -187,7 +221,7 @@ impl<W: Write> BarWriter<W> {
                 && let Some(checksum) = entry.sha1
             {
                 // Forge IV
-                let iv = crate::crypto::forge_iv(
+                let iv = super::forge_iv(
                     u64::from(file_count),
                     u64::from(entry.uncompressed_size),
                     u64::from(entry.compressed_size),
@@ -200,22 +234,22 @@ impl<W: Write> BarWriter<W> {
                 head.extend_from_slice(&[0u8; 4]);
                 head.extend_from_slice(&checksum);
 
-                // Encrypt head with SIGNATURE_KEY using CryptoWriter
+                // Encrypt head with signature_key using CryptoWriter
                 let mut cw_head = CryptoWriter::new(
                     Vec::new(),
-                    Ctr64BE::<Blowfish>::new(&SIGNATURE_KEY.into(), &iv.into()),
+                    Ctr64BE::<Blowfish>::new(&self.signature_key.into(), &iv.into()),
                 );
                 cw_head.write_all(&head)?;
                 let head_enc = cw_head.into_inner();
 
-                // Encrypt body with DEFAULT_KEY using IV + 3 via CryptoWriter
+                // Encrypt body with default_key using IV + 3 via CryptoWriter
                 let mut iv_as_u64 = u64::from_be_bytes(iv);
                 iv_as_u64 = iv_as_u64.wrapping_add(3);
                 let iv_body = iv_as_u64.to_be_bytes();
 
                 let mut cw_body = CryptoWriter::new(
                     Vec::new(),
-                    Ctr64BE::<Blowfish>::new(&DEFAULT_KEY.into(), &iv_body.into()),
+                    Ctr64BE::<Blowfish>::new(&self.default_key.into(), &iv_body.into()),
                 );
                 cw_body.write_all(&entry.data)?;
                 let body_enc = cw_body.into_inner();

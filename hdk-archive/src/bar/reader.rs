@@ -1,5 +1,8 @@
 use super::structs::{BarEntry, BarEntryMetadata, BarHeader};
+
+use crate::archive::ArchiveReader;
 use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType};
+
 use binrw::BinReaderExt;
 use ctr::Ctr64BE;
 use ctr::cipher::{KeyIvInit, StreamCipher};
@@ -8,19 +11,33 @@ use hdk_comp::zlib::reader::SegmentedZlibReader;
 use hdk_secure::blowfish::Blowfish;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 
-use crate::archive::ArchiveReader;
-use crate::crypto::{DEFAULT_KEY, SIGNATURE_KEY};
-
 pub struct BarReader<R: Read + Seek> {
     inner: R,
     header: BarHeader,
     entries: Vec<BarEntry>,
     toc_base: u64,
     flags: BitFlags<ArchiveFlags>,
+
+    /// The default Blowfish key used for decrypting encrypted file bodies.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    default_key: [u8; 32],
+
+    /// The signature Blowfish key used for decrypting encrypted file headers.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    signature_key: [u8; 32],
 }
 
 impl<R: Read + Seek> BarReader<R> {
-    pub fn open(mut reader: R) -> io::Result<Self> {
+    /// Open a BAR archive for reading.
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - The underlying reader to read the archive from.
+    /// * `default_key` - The Blowfish key used for decrypting encrypted file bodies.
+    /// * `signature_key` - The Blowfish key used for decrypting encrypted file headers.
+    pub fn open(mut reader: R, default_key: [u8; 32], signature_key: [u8; 32]) -> io::Result<Self> {
         let magic_val = reader
             .read_le::<u32>()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -107,6 +124,8 @@ impl<R: Read + Seek> BarReader<R> {
             entries,
             toc_base,
             flags,
+            default_key,
+            signature_key,
         })
     }
 }
@@ -144,7 +163,7 @@ impl<R: Read + Seek> ArchiveReader for BarReader<R> {
 
         match comp_type {
             CompressionType::Encrypted => {
-                let iv = crate::crypto::forge_iv(
+                let iv = super::forge_iv(
                     u64::from(self.header.file_count),
                     u64::from(entry.uncompressed_size),
                     u64::from(entry.compressed_size),
@@ -164,7 +183,7 @@ impl<R: Read + Seek> ArchiveReader for BarReader<R> {
                 let mut body_wrapper = body_wrapper.to_vec();
 
                 type BlowfishCtr = Ctr64BE<Blowfish>;
-                let mut bf = BlowfishCtr::new(&SIGNATURE_KEY.into(), &iv.into());
+                let mut bf = BlowfishCtr::new(&self.signature_key.into(), &iv.into());
                 bf.apply_keystream(&mut head);
 
                 let mut iv_val = u64::from_be_bytes(iv);
@@ -176,7 +195,7 @@ impl<R: Read + Seek> ArchiveReader for BarReader<R> {
                 }
 
                 let (_fourcc, actual_body) = body_wrapper.split_at_mut(4);
-                let mut bf_body = BlowfishCtr::new(&DEFAULT_KEY.into(), &iv_body.into());
+                let mut bf_body = BlowfishCtr::new(&self.default_key.into(), &iv_body.into());
                 bf_body.apply_keystream(actual_body);
 
                 let seg = SegmentedZlibReader::new(Cursor::new(actual_body.to_vec()));

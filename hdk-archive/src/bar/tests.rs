@@ -4,6 +4,12 @@ use std::io::{Cursor, Read};
 
 use crate::archive::ArchiveReader;
 
+/// Test default Blowfish key (32 bytes) for encrypted file bodies.
+const TEST_DEFAULT_KEY: [u8; 32] = [0xAA; 32];
+
+/// Test signature Blowfish key (32 bytes) for encrypted file headers.
+const TEST_SIGNATURE_KEY: [u8; 32] = [0xBB; 32];
+
 // Helper to write a mock BAR file
 fn create_mock_bar() -> Vec<u8> {
     let mut buffer = Vec::new();
@@ -55,7 +61,9 @@ fn test_open_bar() {
     let data = create_mock_bar();
     let cursor = Cursor::new(data);
 
-    let mut archive = BarReader::open(cursor).expect("Failed to open BAR");
+    // For unencrypted entries, the keys are not used, but we still need to provide them
+    let mut archive =
+        BarReader::open(cursor, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY).expect("Failed to open BAR");
 
     assert_eq!(archive.entry_count(), 1);
     let meta = archive
@@ -116,24 +124,12 @@ fn test_encrypted_entry_readback() {
     let iv = val.to_be_bytes();
 
     // Keys (match reader constants)
-    const DEFAULT_KEY: [u8; 32] = [
-        0x80, 0x6D, 0x79, 0x16, 0x23, 0x42, 0xA1, 0x0E, 0x8F, 0x78, 0x14, 0xD4, 0xF9, 0x94, 0xA2,
-        0xD1, 0x74, 0x13, 0xFC, 0xA8, 0xF6, 0xE0, 0xB8, 0xA4, 0xED, 0xB9, 0xDC, 0x32, 0x7F, 0x8B,
-        0xA7, 0x11,
-    ];
-
-    const SIGNATURE_KEY: [u8; 32] = [
-        0xEF, 0x8C, 0x7D, 0xE8, 0xE5, 0xD5, 0xD6, 0x1D, 0x6A, 0xAA, 0x5A, 0xCA, 0xF7, 0xC1, 0x6F,
-        0xC4, 0x5A, 0xFC, 0x59, 0xE4, 0x8F, 0xE6, 0xC5, 0x93, 0x7E, 0xBD, 0xFF, 0xC1, 0xE3, 0x99,
-        0x9E, 0x62,
-    ];
-
     type BlowfishCtr = Ctr64BE<Blowfish>;
 
     // Encrypt head with SIGNATURE_KEY using CryptoWriter
     let mut cw_head = hdk_secure::writer::CryptoWriter::new(
         Vec::new(),
-        BlowfishCtr::new(&SIGNATURE_KEY.into(), &iv.into()),
+        BlowfishCtr::new(&TEST_SIGNATURE_KEY.into(), &iv.into()),
     );
     cw_head.write_all(&head).unwrap();
     let head_enc = cw_head.into_inner();
@@ -145,7 +141,7 @@ fn test_encrypted_entry_readback() {
 
     let mut cw_body = hdk_secure::writer::CryptoWriter::new(
         Vec::new(),
-        BlowfishCtr::new(&DEFAULT_KEY.into(), &iv_body.into()),
+        BlowfishCtr::new(&TEST_DEFAULT_KEY.into(), &iv_body.into()),
     );
     cw_body.write_all(&compressed).unwrap();
     let body_enc = cw_body.into_inner();
@@ -193,7 +189,9 @@ fn test_encrypted_entry_readback() {
 
     // Open with BarReader and verify content round-trip
     let cursor = Cursor::new(buf);
-    let mut archive = crate::bar::reader::BarReader::open(cursor).expect("Failed to open BAR");
+    let mut archive =
+        crate::bar::reader::BarReader::open(cursor, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY)
+            .expect("Failed to open BAR");
     assert_eq!(archive.entry_count(), 1);
 
     let mut reader = archive.entry_reader(0).expect("Failed to get entry reader");
@@ -213,7 +211,11 @@ fn test_encrypted_entry_write_and_read() {
     use std::io::Cursor;
 
     let content = b"Roundtrip Encrypted Content";
-    let mut writer = BarWriter::new(Cursor::new(Vec::new()));
+    let mut writer = BarWriter::new(
+        Cursor::new(Vec::new()),
+        TEST_DEFAULT_KEY,
+        TEST_SIGNATURE_KEY,
+    );
     writer
         .add_entry(
             AfsHash::new_from_str("encrypted_file"),
@@ -225,7 +227,9 @@ fn test_encrypted_entry_write_and_read() {
     let mut out = writer.finish().expect("Failed to finish writer");
     out.set_position(0);
 
-    let mut archive = crate::bar::reader::BarReader::open(out).expect("Failed to open written BAR");
+    let mut archive =
+        crate::bar::reader::BarReader::open(out, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY)
+            .expect("Failed to open written BAR");
     let mut reader = archive.entry_reader(0).expect("Failed to get entry reader");
     let mut got = Vec::new();
     use std::io::Read;

@@ -44,7 +44,7 @@ Unlike legacy C tools, `hdk-rs` leverages Rust's type system and traits. Readers
 | Crate | Description |
 | :--- | :--- |
 | **[`hdk-secure`](./hdk-secure)** | Implementation of algorithms from Sony's `libsecure`. Supports **XTEA** and **Blowfish**. Fully compatible with the [RustCrypto](https://github.com/RustCrypto) ecosystem. |
-| **[`hdk-archive`](./hdk-archive)** | Reader/Writer support for **BAR** and **SHARC** PlayStation Home archives. Implements standard IO traits for maximum flexibility. |
+| **[`hdk-archive`](./hdk-archive)** | Reader/Writer support for **BAR** and **SHARC** PlayStation Home archives. Includes a full-fledged **Mapper** for recovering file paths. |
 | **[`hdk-sdat`](./hdk-sdat)** | Full support for the Sony **SDATA** format. Unpack, repack, and stream data efficiently. |
 | **[`hdk-firmware`](./hdk-firmware)** | Handle **PUP** containers and **SCE** file encryption/decryption (used in system updates like `PS3UPDAT.PUP`). |
 | **[`hdk-comp`](./hdk-comp)** | Implementations of **EdgeLZMA** and **EdgeZlib**. Deeply integrated with IO traits to allow streaming composition with crypto modules. |

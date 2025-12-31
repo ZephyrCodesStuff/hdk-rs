@@ -17,8 +17,8 @@ walkdir = "2.5.0"
 fancy-regex = "0.17.0"
 
 # hdk-rs dependencies
-hdk-comp = { git = "https://github.com/ZephyrCodesStuff/hdk-rs.git" }
-hdk-secure = { git = "https://github.com/ZephyrCodesStuff/hdk-rs.git" }
+hdk-comp = { path = "../hdk-comp" }
+hdk-secure = { path = "../hdk-secure" }
 
 [dev-dependencies]
 sha1 = "0.11.0-rc.3"

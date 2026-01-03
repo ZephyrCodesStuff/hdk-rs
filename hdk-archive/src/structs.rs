@@ -1,4 +1,4 @@
-use binrw::BinRead;
+use binrw::{BinRead, Endian};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 pub const ARCHIVE_MAGIC: u32 = 0xADEF17E1;
@@ -7,6 +7,15 @@ pub const ARCHIVE_MAGIC: u32 = 0xADEF17E1;
 pub enum Endianness {
     Little,
     Big,
+}
+
+impl From<Endianness> for Endian {
+    fn from(endianness: Endianness) -> Self {
+        match endianness {
+            Endianness::Little => Self::Little,
+            Endianness::Big => Self::Big,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BinRead, IntoPrimitive, TryFromPrimitive)]

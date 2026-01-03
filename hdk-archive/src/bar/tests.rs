@@ -63,7 +63,7 @@ fn test_open_bar() {
 
     // For unencrypted entries, the keys are not used, but we still need to provide them
     let mut archive =
-        BarReader::open(cursor, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY).expect("Failed to open BAR");
+        BarReader::open(cursor, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY, None).expect("Failed to open BAR");
 
     assert_eq!(archive.entry_count(), 1);
     let meta = archive
@@ -190,7 +190,7 @@ fn test_encrypted_entry_readback() {
     // Open with BarReader and verify content round-trip
     let cursor = Cursor::new(buf);
     let mut archive =
-        crate::bar::reader::BarReader::open(cursor, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY)
+        crate::bar::reader::BarReader::open(cursor, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY, None)
             .expect("Failed to open BAR");
     assert_eq!(archive.entry_count(), 1);
 
@@ -228,7 +228,7 @@ fn test_encrypted_entry_write_and_read() {
     out.set_position(0);
 
     let mut archive =
-        crate::bar::reader::BarReader::open(out, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY)
+        crate::bar::reader::BarReader::open(out, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY, None)
             .expect("Failed to open written BAR");
     let mut reader = archive.entry_reader(0).expect("Failed to get entry reader");
     let mut got = Vec::new();

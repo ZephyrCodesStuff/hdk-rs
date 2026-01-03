@@ -1,9 +1,9 @@
 use super::structs::{BarEntry, BarEntryMetadata, BarHeader};
 
 use crate::archive::ArchiveReader;
-use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType};
+use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType, Endianness};
 
-use binrw::BinReaderExt;
+use binrw::{BinReaderExt, Endian};
 use ctr::Ctr64BE;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use enumflags2::BitFlags;
@@ -17,6 +17,9 @@ pub struct BarReader<R: Read + Seek> {
     entries: Vec<BarEntry>,
     toc_base: u64,
     flags: BitFlags<ArchiveFlags>,
+
+    /// The detected endianness of the archive.
+    pub endianness: Endianness,
 
     /// The default Blowfish key used for decrypting encrypted file bodies.
     ///
@@ -37,9 +40,16 @@ impl<R: Read + Seek> BarReader<R> {
     /// * `reader` - The underlying reader to read the archive from.
     /// * `default_key` - The Blowfish key used for decrypting encrypted file bodies.
     /// * `signature_key` - The Blowfish key used for decrypting encrypted file headers.
-    pub fn open(mut reader: R, default_key: [u8; 32], signature_key: [u8; 32]) -> io::Result<Self> {
+    /// * `endianness` - Optional endianness (defaults to Little if None).
+    pub fn open(mut reader: R, default_key: [u8; 32], signature_key: [u8; 32], endianness: Option<Endianness>) -> io::Result<Self> {
+        // Determine endianness (default to Little)
+        let endianness = endianness.unwrap_or(Endianness::Little);
+        
+        // Convert to binrw::Endian using the From trait
+        let endian: Endian = endianness.into();
+
         let magic_val = reader
-            .read_le::<u32>()
+            .read_type::<u32>(endian)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         if magic_val != ARCHIVE_MAGIC {
             return Err(io::Error::new(
@@ -50,7 +60,7 @@ impl<R: Read + Seek> BarReader<R> {
 
         // Read fixed header part
         let header: BarHeader = reader
-            .read_le()
+            .read_type(endian)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         // Convert tuple to actual types
@@ -75,7 +85,7 @@ impl<R: Read + Seek> BarReader<R> {
         // Handle ZTOC
         let (toc_data, toc_base) = if flags.contains(ArchiveFlags::ZTOC) {
             let compressed_size = reader
-                .read_le::<u32>()
+                .read_type::<u32>(endian)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             let mut compressed_data = vec![0u8; compressed_size as usize];
             reader.read_exact(&mut compressed_data)?;
@@ -103,7 +113,7 @@ impl<R: Read + Seek> BarReader<R> {
 
         for _ in 0..entries_count {
             let mut entry: BarEntry = cursor
-                .read_le()
+                .read_type(endian)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
             // Fixup compression type bug (0 vs 1)
@@ -124,6 +134,7 @@ impl<R: Read + Seek> BarReader<R> {
             entries,
             toc_base,
             flags,
+            endianness,
             default_key,
             signature_key,
         })

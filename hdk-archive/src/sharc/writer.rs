@@ -1,16 +1,16 @@
-use aes::Aes256;
 use aes::cipher::KeyIvInit;
+use aes::Aes256;
 use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
 use ctr::Ctr128BE;
 use enumflags2::{BitFlag, BitFlags};
-use flate2::{Compression, write::ZlibEncoder};
+use flate2::{write::ZlibEncoder, Compression};
 use rand::RngCore;
 use std::io::{self, Read, Write};
 
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
 use hdk_secure::{hash::AfsHash, xtea::modes::XteaPS3};
 
-use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, CompressionType, Endianness};
+use crate::structs::{ArchiveFlags, CompressionType, Endianness, ARCHIVE_MAGIC};
 
 /// Helper small struct to hold a queued entry for writing
 struct EntryToWrite {
@@ -117,7 +117,7 @@ impl<W: Write> SharcWriter<W> {
         // Use current system time as timestamp
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("system time error: {e}")))?
+            .map_err(|e| io::Error::other(format!("system time error: {e}")))?
             .as_secs() as i32;
 
         Ok(Self {

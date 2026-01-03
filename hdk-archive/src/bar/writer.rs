@@ -63,6 +63,7 @@ impl Default for BarWriter<std::io::Cursor<Vec<u8>>> {
     }
 }
 
+// TODO: make endianness configurable
 impl<W: Write> BarWriter<W> {
     /// Create a new BAR archive writer.
     ///
@@ -71,13 +72,11 @@ impl<W: Write> BarWriter<W> {
     /// * `inner` - The underlying writer to write the archive to.
     /// * `default_key` - The Blowfish key used for encrypting file bodies.
     /// * `signature_key` - The Blowfish key used for encrypting file headers.
-
-    // TODO: make endianness configurable
     pub fn new(inner: W, default_key: [u8; 32], signature_key: [u8; 32]) -> io::Result<Self> {
         // Use current system time as timestamp
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("system time error: {e}")))?
+            .map_err(|e| io::Error::other(format!("system time error: {e}")))?
             .as_secs() as i32;
 
         Ok(Self {

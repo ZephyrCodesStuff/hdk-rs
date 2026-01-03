@@ -62,8 +62,8 @@ fn test_open_bar() {
     let cursor = Cursor::new(data);
 
     // For unencrypted entries, the keys are not used, but we still need to provide them
-    let mut archive =
-        BarReader::open(cursor, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY, None).expect("Failed to open BAR");
+    let mut archive = BarReader::open(cursor, TEST_DEFAULT_KEY, TEST_SIGNATURE_KEY, None)
+        .expect("Failed to open BAR");
 
     assert_eq!(archive.entry_count(), 1);
     let meta = archive
@@ -84,8 +84,8 @@ fn test_open_bar() {
 #[test]
 fn test_encrypted_entry_readback() {
     use byteorder::{LittleEndian, WriteBytesExt};
-    use ctr::Ctr64BE;
     use ctr::cipher::KeyIvInit;
+    use ctr::Ctr64BE;
     use hdk_secure::blowfish::Blowfish;
     use sha1::Sha1;
     use std::io::Cursor;
@@ -215,7 +215,9 @@ fn test_encrypted_entry_write_and_read() {
         Cursor::new(Vec::new()),
         TEST_DEFAULT_KEY,
         TEST_SIGNATURE_KEY,
-    );
+    )
+    .unwrap();
+
     writer
         .add_entry(
             AfsHash::new_from_str("encrypted_file"),

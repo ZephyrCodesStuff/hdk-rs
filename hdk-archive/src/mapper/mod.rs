@@ -293,11 +293,10 @@ impl Mapper {
 
                     // If the match contains quoted content, extract the part between the first and last quote
                     if raw.contains('"') {
-                        if let (Some(s), Some(e)) = (raw.find('"'), raw.rfind('"')) {
-                            if e > s {
+                        if let (Some(s), Some(e)) = (raw.find('"'), raw.rfind('"'))
+                            && e > s {
                                 raw = raw[s + 1..e].to_string();
                             }
-                        }
                     } else {
                         // Remove common leading tokens like `source=` or `file=` and trim
                         raw = raw

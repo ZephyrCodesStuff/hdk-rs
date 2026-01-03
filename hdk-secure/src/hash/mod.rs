@@ -8,7 +8,9 @@ impl AfsHash {
     ///
     /// This does not verify that the string is an actual AfsHash: only that it matches the expected format.
     pub fn is_valid_hash_str(s: &str) -> bool {
-        s.len() == 8 && s.chars().all(|c| c.is_ascii_hexdigit() && c.is_uppercase())
+        s.len() == 8
+            && s.chars()
+                .all(|c| c.is_ascii_hexdigit() && (c.is_ascii_uppercase() || c.is_ascii_digit()))
     }
 
     pub fn new_from_str(s: &str) -> Self {
@@ -44,9 +46,12 @@ impl AfsHash {
 
 impl core::fmt::Display for AfsHash {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // TODO: Investigate why this currently works..?
-        //       (AfsHash is signed but we print as unsigned)
-        write!(f, "{:08X}", self.0 as u32)
+        let bytes = self.0.to_be_bytes();
+        write!(
+            f,
+            "{:02X}{:02X}{:02X}{:02X}",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     }
 }
 

@@ -97,6 +97,15 @@ impl<W: Write> SharcWriter<W> {
         self
     }
 
+    /// Set the timestamp of the archive.
+    ///
+    /// This is often random bytes in original Home archives,
+    /// but `hdk-rs` uses the device's local time by default.
+    pub const fn with_timestamp(mut self, timestamp: i32) -> Self {
+        self.timestamp = timestamp;
+        self
+    }
+
     pub fn new(inner: W, key: [u8; 32], endianness: Endianness) -> io::Result<Self> {
         let mut rng = rand::rng();
         let mut iv = [0u8; 16];
@@ -104,6 +113,12 @@ impl<W: Write> SharcWriter<W> {
 
         let mut files_key = [0u8; 16];
         rng.fill_bytes(&mut files_key);
+
+        // Use current system time as timestamp
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("system time error: {e}")))?
+            .as_secs() as i32;
 
         Ok(Self {
             inner,
@@ -113,7 +128,7 @@ impl<W: Write> SharcWriter<W> {
             flags: ArchiveFlags::empty(),
             iv,
             priority: 0,
-            timestamp: 0,
+            timestamp,
             files_key,
             entries: Vec::new(),
         })

@@ -231,20 +231,21 @@ impl Mapper {
         let hashes = RwLock::new(HashMap::new());
 
         // insert static hashes for files that do not get referenced (therefore can't be detected)
+        // Use the same string-based normalization used for matches so hashing is consistent.
         {
             for file_path in COMMON_FILES.iter() {
-                let path = PathBuf::from(file_path);
-                let hash = AfsHash::new_from_path(&path);
+                let s = file_path.to_string();
+                let hash = AfsHash::new_from_str(&s);
 
-                hashes.write().unwrap().insert(hash, path);
+                hashes.write().unwrap().insert(hash, PathBuf::from(s));
             }
 
             if let Some(uuid) = &uuid {
                 for file_path in COMMON_FILES.iter() {
-                    let path = PathBuf::from("Objects").join(uuid).join(file_path);
-                    let hash = AfsHash::new_from_path(&path);
+                    let s = format!("Objects/{uuid}/{}", file_path);
+                    let hash = AfsHash::new_from_str(&s);
 
-                    hashes.write().unwrap().insert(hash, path);
+                    hashes.write().unwrap().insert(hash, PathBuf::from(s));
                 }
             }
         }
@@ -287,28 +288,62 @@ impl Mapper {
                 let matches: Vec<_> = regex.find_iter(&data_str).filter_map(|m| m.ok()).collect();
 
                 for m in matches {
-                    let mut path_str = m
-                        .as_str()
+                    // Start with the raw match string and try to extract the actual path
+                    let mut raw = m.as_str().to_string();
+
+                    // If the match contains quoted content, extract the part between the first and last quote
+                    if raw.contains('"') {
+                        if let (Some(s), Some(e)) = (raw.find('"'), raw.rfind('"')) {
+                            if e > s {
+                                raw = raw[s + 1..e].to_string();
+                            }
+                        }
+                    } else {
+                        // Remove common leading tokens like `source=` or `file=` and trim
+                        raw = raw
+                            .trim()
+                            .trim_start_matches("source=")
+                            .trim_start_matches("file=")
+                            .trim()
+                            .to_string();
+                    }
+
+                    // Normalize slashes and lowercase (matches are compared against string-hashed entries)
+                    let path_str = raw
                         .to_lowercase()
                         .replace("\\", "/")
                         .replace("file:///resource_root/build/", "")
                         .replace("file://resource_root/build/", "");
 
-                    if let Some(ext) = SCENE_EXTENSIONS.iter().find(|&ext| path_str.ends_with(ext))
+                    // Generate scene extension variants for the plain path (non-UUID)
+                    if let Some(base) = SCENE_EXTENSIONS
+                        .iter()
+                        .find_map(|ext| path_str.strip_suffix(ext))
                     {
                         for extension in SCENE_EXTENSIONS.iter() {
-                            let scene_val = path_str.replace(ext, extension);
+                            let scene_val = format!("{base}{extension}");
                             let hashed_val = AfsHash::new_from_str(&scene_val);
-                            local_matches.insert(hashed_val, scene_val);
+                            local_matches.insert(hashed_val, scene_val.clone());
+
+                            // Also insert UUID-prefixed variant so object-scoped hashes match
+                            if let Some(uuid) = &uuid {
+                                let scene_uuid = format!("Objects/{uuid}/{scene_val}");
+                                let hashed_uuid = AfsHash::new_from_str(&scene_uuid);
+                                local_matches.insert(hashed_uuid, scene_uuid);
+                            }
                         }
                     }
 
-                    if let Some(uuid) = &uuid {
-                        path_str = format!("Objects/{uuid}/{path_str}");
-                    }
+                    // Insert the plain path
+                    let hash_plain = AfsHash::new_from_str(&path_str);
+                    local_matches.insert(hash_plain, path_str.clone());
 
-                    let hash = AfsHash::new_from_str(&path_str);
-                    local_matches.insert(hash, path_str);
+                    // If mapping an object, also insert the UUID-prefixed path variant
+                    if let Some(uuid) = &uuid {
+                        let uuid_path = format!("Objects/{uuid}/{path_str}");
+                        let hash_uuid = AfsHash::new_from_str(&uuid_path);
+                        local_matches.insert(hash_uuid, uuid_path);
+                    }
                 }
             }
 
@@ -332,7 +367,6 @@ impl Mapper {
 
         // Check if we found any hashes
         if hashes.read().unwrap().is_empty() {
-            println!("No mappings found!");
             return MappingResult {
                 mapped: 0,
                 not_found: Vec::new(),
@@ -358,11 +392,19 @@ impl Mapper {
 
         for path in &paths {
             let hash_str = path.file_name().unwrap().to_str().unwrap().to_owned();
+            println!(
+                "Mapping file {}/{}: {}",
+                found.load(std::sync::atomic::Ordering::Relaxed) + 1,
+                file_count,
+                hash_str
+            );
+
             if !AfsHash::is_valid_hash_str(&hash_str) {
                 continue;
             }
 
-            let hash = AfsHash::new_from_str(&hash_str);
+            let hash_val = u32::from_str_radix(&hash_str, 16).unwrap();
+            let hash = AfsHash(hash_val as i32);
             let recovered_path = {
                 let rw = hashes.read().unwrap();
                 match rw.get(&hash) {
@@ -375,24 +417,16 @@ impl Mapper {
                 }
             };
 
-            let relative_path = input_folder.join(hash.to_string());
-
             let output_path = output_folder.join(recovered_path);
             std::fs::create_dir_all(output_path.parent().unwrap()).unwrap();
 
             // Note: apparently moving a file DOES NOT take less time than copying it..?
-            std::fs::copy(&relative_path, &output_path).unwrap();
+            std::fs::copy(path, &output_path).unwrap();
 
             found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
 
         let found = found.load(std::sync::atomic::Ordering::Relaxed);
-        println!("Mapped {} files!", found);
-
-        let not_found_len = not_found.read().unwrap().len();
-        if not_found_len > 0 {
-            println!("Could not find mappings for {} files!", not_found_len);
-        }
 
         // Copy .time file
         let time_file = input_folder.join(".time");

@@ -21,6 +21,12 @@ pub struct BarWriter<W: Write> {
     /// Default is no flags.
     flags: BitFlags<ArchiveFlags>,
 
+    /// The timestamp of the archive.
+    ///
+    /// This is often random bytes in original Home archives,
+    /// but `hdk-rs` uses the device's local time by default.
+    timestamp: i32,
+
     /// The list of entries to write.
     ///
     /// Each entry holds its data in-memory until `finish()` is called.
@@ -51,6 +57,12 @@ struct BarEntryToWrite {
     sha1: Option<[u8; 20]>,
 }
 
+impl Default for BarWriter<std::io::Cursor<Vec<u8>>> {
+    fn default() -> Self {
+        Self::new(std::io::Cursor::new(Vec::new()), [0u8; 32], [0u8; 32]).unwrap()
+    }
+}
+
 impl<W: Write> BarWriter<W> {
     /// Create a new BAR archive writer.
     ///
@@ -59,14 +71,23 @@ impl<W: Write> BarWriter<W> {
     /// * `inner` - The underlying writer to write the archive to.
     /// * `default_key` - The Blowfish key used for encrypting file bodies.
     /// * `signature_key` - The Blowfish key used for encrypting file headers.
-    pub fn new(inner: W, default_key: [u8; 32], signature_key: [u8; 32]) -> Self {
-        Self {
+
+    // TODO: make endianness configurable
+    pub fn new(inner: W, default_key: [u8; 32], signature_key: [u8; 32]) -> io::Result<Self> {
+        // Use current system time as timestamp
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("system time error: {e}")))?
+            .as_secs() as i32;
+
+        Ok(Self {
             inner,
+            timestamp,
             flags: BitFlags::empty(), // Default no flags
             entries: Vec::new(),
             default_key,
             signature_key,
-        }
+        })
     }
 
     /// Set the default Blowfish key used for encrypting file bodies.
@@ -85,8 +106,15 @@ impl<W: Write> BarWriter<W> {
         self
     }
 
+    /// Set the archive flags to write in the header.
     pub const fn with_flags(mut self, flags: BitFlags<ArchiveFlags>) -> Self {
         self.flags = flags;
+        self
+    }
+
+    /// Set the timestamp of the archive.
+    pub const fn with_timestamp(mut self, timestamp: i32) -> Self {
+        self.timestamp = timestamp;
         self
     }
 
@@ -195,8 +223,7 @@ impl<W: Write> BarWriter<W> {
         // Priority (0 default)
         self.inner.write_i32::<LittleEndian>(0)?;
         // Timestamp (0 default)
-        // TODO: support custom timestamp
-        self.inner.write_i32::<LittleEndian>(0)?;
+        self.inner.write_i32::<LittleEndian>(self.timestamp)?;
         // File Count
         self.inner.write_u32::<LittleEndian>(file_count)?;
 

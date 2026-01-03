@@ -12,8 +12,8 @@ pub enum Endianness {
 impl From<Endianness> for Endian {
     fn from(endianness: Endianness) -> Self {
         match endianness {
-            Endianness::Little => Endian::Little,
-            Endianness::Big => Endian::Big,
+            Endianness::Little => Self::Little,
+            Endianness::Big => Self::Big,
         }
     }
 }

@@ -41,22 +41,39 @@ impl<R: Read + Seek> BarReader<R> {
     /// * `default_key` - The Blowfish key used for decrypting encrypted file bodies.
     /// * `signature_key` - The Blowfish key used for decrypting encrypted file headers.
     /// * `endianness` - Optional endianness (defaults to Little if None).
-    pub fn open(mut reader: R, default_key: [u8; 32], signature_key: [u8; 32], endianness: Option<Endianness>) -> io::Result<Self> {
-        // Determine endianness (default to Little)
-        let endianness = endianness.unwrap_or(Endianness::Little);
-        
-        // Convert to binrw::Endian using the From trait
-        let endian: Endian = endianness.into();
+    pub fn open(
+        mut reader: R,
+        default_key: [u8; 32],
+        signature_key: [u8; 32],
+        endianness: Option<Endianness>,
+    ) -> io::Result<Self> {
+        // Determine endianness by checking which interpretation yields the archive magic.
+        // Prefer the provided endianness (defaults to Little), but try the opposite before failing.
+        let preferred = endianness.unwrap_or(Endianness::Little);
+        let opposite = match preferred {
+            Endianness::Little => Endianness::Big,
+            Endianness::Big => Endianness::Little,
+        };
 
-        let magic_val = reader
-            .read_type::<u32>(endian)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        if magic_val != ARCHIVE_MAGIC {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Invalid BAR magic",
-            ));
+        let start_pos = reader.stream_position()?;
+        let mut detected: Option<Endianness> = None;
+
+        for &candidate in &[preferred, opposite] {
+            reader.seek(SeekFrom::Start(start_pos))?;
+            let endian_candidate: Endian = candidate.into();
+            let magic_val = reader
+                .read_type::<u32>(endian_candidate)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+            if magic_val == ARCHIVE_MAGIC {
+                detected = Some(candidate);
+                break;
+            }
         }
+
+        let endianness = detected
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid BAR magic"))?;
+        let endian: Endian = endianness.into();
 
         // Read fixed header part
         let header: BarHeader = reader

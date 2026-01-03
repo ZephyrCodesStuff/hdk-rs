@@ -252,7 +252,7 @@ impl<W: Write> BarWriter<W> {
                     u64::from(entry.uncompressed_size),
                     u64::from(entry.compressed_size),
                     u64::from(entry.offset),
-                    0, // timestamp currently 0
+                    self.timestamp,
                 );
 
                 // Build head: 4B fourcc (zeros) + 20B checksum

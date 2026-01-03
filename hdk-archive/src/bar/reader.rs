@@ -13,7 +13,7 @@ use std::io::{self, Cursor, Read, Seek, SeekFrom};
 
 pub struct BarReader<R: Read + Seek> {
     inner: R,
-    header: BarHeader,
+    pub header: BarHeader,
     entries: Vec<BarEntry>,
     toc_base: u64,
     flags: BitFlags<ArchiveFlags>,

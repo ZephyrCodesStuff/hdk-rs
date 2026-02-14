@@ -103,6 +103,12 @@ impl<W: Write> SharcWriter<W> {
         self
     }
 
+    /// Sets the flags of the archive.
+    pub const fn with_flags(mut self, flags: BitFlags<ArchiveFlags>) -> Self {
+        self.flags = flags;
+        self
+    }
+
     pub fn new(inner: W, key: [u8; 32], endianness: Endianness) -> io::Result<Self> {
         let mut rng = rand::rng();
         let mut iv = [0u8; 16];

@@ -1,16 +1,16 @@
-use aes::cipher::KeyIvInit;
 use aes::Aes256;
+use aes::cipher::KeyIvInit;
 use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
 use ctr::Ctr128BE;
 use enumflags2::{BitFlag, BitFlags};
-use flate2::{write::ZlibEncoder, Compression};
+use flate2::{Compression, write::ZlibEncoder};
 use rand::RngCore;
 use std::io::{self, Read, Write};
 
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
 use hdk_secure::{hash::AfsHash, xtea::modes::XteaPS3};
 
-use crate::structs::{ArchiveFlags, CompressionType, Endianness, ARCHIVE_MAGIC};
+use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType, Endianness};
 
 /// Helper small struct to hold a queued entry for writing
 struct EntryToWrite {
@@ -37,9 +37,6 @@ pub struct SharcWriter<W: Write> {
     ///
     /// The canonical default for SHARC is big-endian.
     endianness: Endianness,
-
-    /// This should always be `512` for SHARC archives.
-    pub version: u16,
 
     /// This holds Home archives bitflags.
     pub flags: BitFlags<ArchiveFlags>,
@@ -124,7 +121,6 @@ impl<W: Write> SharcWriter<W> {
             inner,
             key,
             endianness,
-            version: 1,
             flags: ArchiveFlags::empty(),
             iv,
             priority: 0,
@@ -234,17 +230,16 @@ impl<W: Write> SharcWriter<W> {
         }
 
         // 1) Write Preamble (plain)
+        let version = ArchiveVersion::SHARC as u16;
         match self.endianness {
             Endianness::Little => {
                 self.inner.write_u32::<LittleEndian>(ARCHIVE_MAGIC)?;
-                let flags_and_version =
-                    (u32::from(self.version) << 16) | u32::from(self.flags.bits());
+                let flags_and_version = (u32::from(version) << 16) | u32::from(self.flags.bits());
                 self.inner.write_u32::<LittleEndian>(flags_and_version)?;
             }
             Endianness::Big => {
                 self.inner.write_u32::<BigEndian>(ARCHIVE_MAGIC)?;
-                let flags_and_version =
-                    (u32::from(self.version) << 16) | u32::from(self.flags.bits());
+                let flags_and_version = (u32::from(version) << 16) | u32::from(self.flags.bits());
                 self.inner.write_u32::<BigEndian>(flags_and_version)?;
             }
         }

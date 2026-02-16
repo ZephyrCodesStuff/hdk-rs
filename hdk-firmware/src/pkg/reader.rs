@@ -654,7 +654,10 @@ mod tests {
         let name_a_off = entry_table_size as u32;
         let name_b_off = name_a_off + name_a.len() as u32;
         let file_data_off = name_b_off + name_b.len() as u32;
-        let data_size = entry_table_size + name_a.len() + name_b.len() + file_data.len();
+        let unpadded_size = entry_table_size + name_a.len() + name_b.len() + file_data.len();
+
+        // Pad data area to 16-byte boundary for block-aligned encryption
+        let data_size = (unpadded_size + 15) & !15;
 
         let data_offset: u64 = 0x0110;
         let total_size = data_offset + data_size as u64;

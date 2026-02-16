@@ -225,12 +225,12 @@ impl<R: Read + Seek> PkgArchive<R> {
     /// Whether the release-type field indicates a retail (encrypted with AES)
     /// package.  The high bit `0x8000` ("finalized") distinguishes retail
     /// from debug — values `0x8001` / `0x8002` are both retail.
-    pub fn is_retail(&self) -> bool {
+    pub const fn is_retail(&self) -> bool {
         self.header.release_type & 0x8000 != 0
     }
 
     /// Whether the release-type field indicates a debug package.
-    pub fn is_debug(&self) -> bool {
+    pub const fn is_debug(&self) -> bool {
         self.header.release_type & 0x8000 == 0
     }
 
@@ -346,7 +346,7 @@ impl<R: Read + Seek> PkgArchive<R> {
     ///
     /// PSP-flagged entries within a PS3 package use [`PSP_AES_KEY`];
     /// everything else uses the platform-default key.
-    fn key_for_entry(&self, entry: &PkgFileEntry) -> [u8; 16] {
+    const fn key_for_entry(&self, entry: &PkgFileEntry) -> [u8; 16] {
         if entry.is_psp() {
             PSP_AES_KEY
         } else {
@@ -441,7 +441,7 @@ impl<R: Read + Seek> PkgArchive<R> {
             let within = (abs_byte % 16) as usize;
 
             sha_input[56..64].copy_from_slice(&block_idx.to_be_bytes());
-            let hash = Sha1::from(&sha_input).digest().bytes(); // [u8; 20]
+            let hash = Sha1::from(sha_input).digest().bytes(); // [u8; 20]
 
             let n = std::cmp::min(16 - within, data.len() - pos);
             for k in 0..n {
@@ -494,7 +494,7 @@ pub struct Items<'a, R: Read + Seek> {
 }
 
 impl<'a, R: Read + Seek> Items<'a, R> {
-    fn new(archive: &'a mut PkgArchive<R>) -> Self {
+    const fn new(archive: &'a mut PkgArchive<R>) -> Self {
         let total = archive.header.item_count as usize;
         Self {
             archive,
@@ -517,10 +517,11 @@ impl<'a, R: Read + Seek> Iterator for Items<'a, R> {
 
         match self.archive.read_file_entry(i) {
             Ok(entry) => {
-                let name = match self.archive.read_entry_name(&entry) {
-                    Ok(s) => s,
-                    Err(_) => format!("__unnamed_{i:04}"),
-                };
+                let name = self
+                    .archive
+                    .read_entry_name(&entry)
+                    .map_or_else(|_| format!("__unnamed_{i:04}"), |s| s);
+
                 Some(Ok(PkgItem {
                     index: i as u32,
                     name,
@@ -548,7 +549,7 @@ pub struct PkgItemReader<'a, R: Read + Seek> {
 }
 
 impl<'a, R: Read + Seek> PkgItemReader<'a, R> {
-    fn new(archive: &'a mut PkgArchive<R>, entry: PkgFileEntry, key: [u8; 16]) -> Self {
+    const fn new(archive: &'a mut PkgArchive<R>, entry: PkgFileEntry, key: [u8; 16]) -> Self {
         Self {
             archive,
             entry,
@@ -581,7 +582,7 @@ impl<'a, R: Read + Seek> Read for PkgItemReader<'a, R> {
                 self.archive.inner.read_exact(&mut self.buf)?;
                 // Decrypt the block in-place using archive helper.
                 self.archive
-                    .decrypt_in_place(&mut self.buf, (block_idx * 16) as u64, &self.key);
+                    .decrypt_in_place(&mut self.buf, block_idx * 16, &self.key);
                 self.buf_block = block_idx;
                 self.buf_valid = true;
             }
@@ -620,11 +621,11 @@ mod tests {
         sha_input[16..24].copy_from_slice(&qa_digest[8..16]);
         sha_input[24..32].copy_from_slice(&qa_digest[8..16]);
 
-        let blocks = (data.len() + 15) / 16;
+        let blocks = data.len().div_ceil(16);
         for i in 0..blocks {
             let block_idx = offset_in_data / 16 + i as u64;
             sha_input[56..64].copy_from_slice(&block_idx.to_be_bytes());
-            let hash = Sha1::from(&sha_input).digest().bytes();
+            let hash = Sha1::from(sha_input).digest().bytes();
             let start = i * 16;
             let end = std::cmp::min(start + 16, data.len());
             for j in start..end {
@@ -640,7 +641,7 @@ mod tests {
     ///   1 – file      "USRDIR/hello.txt"  with body `b"Hello!"`
     ///
     /// The data area is encrypted with the debug SHA-1 stream cipher.
-    pub(crate) fn build_debug_pkg() -> Vec<u8> {
+    pub fn build_debug_pkg() -> Vec<u8> {
         use byteorder::WriteBytesExt;
 
         let name_a = b"USRDIR\0";
@@ -717,7 +718,7 @@ mod tests {
             // 0xF0 – install directory
             c.set_position(0xF0);
             c.write_all(b"TEST00001\0").unwrap();
-            c.write_all(&vec![0u8; 32 - 10]).unwrap();
+            c.write_all(&[0u8; 32 - 10]).unwrap();
 
             // Build plaintext data area, then encrypt with debug cipher.
             let mut plaintext = vec![0u8; data_size];

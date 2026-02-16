@@ -67,8 +67,8 @@ impl TryFrom<u16> for PkgReleaseType {
 impl fmt::Display for PkgReleaseType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PkgReleaseType::Debug => write!(f, "Debug"),
-            PkgReleaseType::Release => write!(f, "Release"),
+            Self::Debug => write!(f, "Debug"),
+            Self::Release => write!(f, "Release"),
         }
     }
 }
@@ -97,8 +97,8 @@ impl TryFrom<u16> for PkgPlatform {
 impl fmt::Display for PkgPlatform {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PkgPlatform::PS3 => write!(f, "PS3"),
-            PkgPlatform::PSP => write!(f, "PSP"),
+            Self::PS3 => write!(f, "PS3"),
+            Self::PSP => write!(f, "PSP"),
         }
     }
 }

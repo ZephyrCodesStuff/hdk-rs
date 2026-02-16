@@ -256,22 +256,19 @@ impl PkgBuilder {
     // -- Item addition ------------------------------------------------------
 
     /// Add a file to the package.
-    pub fn add_file(mut self, name: &str, data: Vec<u8>) -> Self {
+    pub fn add_file(&mut self, name: &str, data: Vec<u8>) {
         self.items.push(BuilderItem::file(name.to_string(), data));
-        self
     }
 
     /// Add a directory to the package.
-    pub fn add_directory(mut self, name: &str) -> Self {
+    pub fn add_directory(&mut self, name: &str) {
         self.items.push(BuilderItem::directory(name.to_string()));
-        self
     }
 
     /// Add a PSP-type file to the package.
-    pub fn add_psp_file(mut self, name: &str, data: Vec<u8>) -> Self {
+    pub fn add_psp_file(&mut self, name: &str, data: Vec<u8>) {
         self.items
             .push(BuilderItem::file(name.to_string(), data).with_psp_flag());
-        self
     }
 
     // -- Writing ------------------------------------------------------------

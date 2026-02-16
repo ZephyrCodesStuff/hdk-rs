@@ -48,17 +48,17 @@ pub const PSP_AES_KEY: [u8; 16] = [
 #[repr(u16)]
 pub enum PkgReleaseType {
     /// Debug package — data encrypted with SHA-1 stream cipher.
-    Debug = 0x0001,
+    Debug = 0x0000,
     /// Release/retail package — data encrypted with AES-128-CTR.
-    Release = 0x0002,
+    Release = 0x8000,
 }
 
 impl TryFrom<u16> for PkgReleaseType {
     type Error = u16;
     fn try_from(v: u16) -> Result<Self, u16> {
-        match v {
-            0x0001 => Ok(Self::Debug),
-            0x0002 => Ok(Self::Release),
+        match v & 0x8000 {
+            0x0000 => Ok(Self::Debug),
+            0x8000 => Ok(Self::Release),
             other => Err(other),
         }
     }
@@ -86,7 +86,7 @@ pub enum PkgPlatform {
 impl TryFrom<u16> for PkgPlatform {
     type Error = u16;
     fn try_from(v: u16) -> Result<Self, u16> {
-        match v {
+        match v & 0x000F {
             0x0001 => Ok(Self::PS3),
             0x0002 => Ok(Self::PSP),
             other => Err(other),

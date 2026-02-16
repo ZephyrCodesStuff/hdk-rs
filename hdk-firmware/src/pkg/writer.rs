@@ -307,11 +307,14 @@ impl PkgBuilder {
 
         let mut current_offset = entry_table_size;
 
-        // Allocate space for names
+        // Allocate space for names (each padded to 16-byte boundary).
+        // RPCS3's decrypt() does not handle sub-block alignment, so every
+        // name offset must be 16-byte aligned.
         for item in &self.items {
             name_offsets.push(current_offset as u32);
+            let name_alloc = (item.name.len() + 1 + 15) & !15; // +1 NUL, align to 16
             current_offset = current_offset
-                .checked_add(item.name.len() + 1) // +1 for NUL terminator
+                .checked_add(name_alloc)
                 .ok_or(PkgWriteError::DataOverflow)?;
         }
 
@@ -594,7 +597,7 @@ mod tests {
             0x0F, 0x10,
         ];
 
-        let buf = Vec::new();
+        let mut buf = Vec::new();
         let mut pkg = PkgBuilder::new()
             .release_type(PkgReleaseType::Release)
             .platform(PkgPlatform::PS3)
@@ -603,6 +606,7 @@ mod tests {
             .klicensee(klic);
 
         pkg.add_file("EBOOT.BIN", vec![0x42; 64]);
+        pkg.write(io::Cursor::new(&mut buf)).unwrap();
 
         // Read it back
         let mut pkg = PkgArchive::open(io::Cursor::new(&buf)).unwrap();

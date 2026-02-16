@@ -319,9 +319,17 @@ impl PkgBuilder {
         // Build metadata with placeholder total_size to determine its size
         let (placeholder_meta, metadata_count) = self.build_metadata(0, &self.qa_digest);
         let metadata_offset = PKG_HEADER_SIZE as u32; // 0xC0
-        let metadata_size = placeholder_meta.len() as u32;
 
-        // Calculate data_offset dynamically (16-byte aligned after metadata)
+        // Calculate actual metadata section size including padding and digest
+        let raw_meta_size = placeholder_meta.len() as u64;
+        let metadata_aligned = ((metadata_offset as u64 + raw_meta_size) + 15) & !15;
+        let metadata_padding = metadata_aligned - (metadata_offset as u64 + raw_meta_size);
+        let metadata_digest_size = 0x40u64; // 64 bytes after aligned metadata
+
+        // metadata_size = raw metadata + padding + 64-byte digest
+        let metadata_size = (raw_meta_size + metadata_padding + metadata_digest_size) as u32;
+
+        // Calculate data_offset dynamically (16-byte aligned after metadata section)
         let data_offset = ((metadata_offset as u64 + metadata_size as u64) + 15) & !15;
 
         // Calculate data area layout
@@ -344,6 +352,10 @@ impl PkgBuilder {
                 .checked_add(name_alloc)
                 .ok_or(PkgWriteError::DataOverflow)?;
         }
+
+        // file_desc_length = entry table + names (before file data).
+        // This is the portion of the plaintext data area fed into the QA digest hash.
+        let file_desc_length = current_offset;
 
         // Allocate space for file data (16-byte aligned)
         for item in &self.items {
@@ -393,10 +405,21 @@ impl PkgBuilder {
         writer.seek(SeekFrom::Start(metadata_offset as u64))?;
         writer.write_all(&meta_buf)?;
 
-        // Zero-fill the alignment gap between metadata end and data_offset
+        // Pad metadata to 16-byte alignment before writing metadata_digest
         let meta_end = metadata_offset as u64 + meta_buf.len() as u64;
-        if data_offset > meta_end {
-            let gap = (data_offset - meta_end) as usize;
+        let metadata_aligned = (meta_end + 15) & !15;
+        if metadata_aligned > meta_end {
+            let padding = (metadata_aligned - meta_end) as usize;
+            writer.write_all(&vec![0u8; padding])?;
+        }
+
+        // Write metadata_digest placeholder (64 bytes after aligned metadata) — will rewrite after final hash
+        writer.write_all(&vec![0u8; metadata_digest_size as usize])?;
+
+        // Zero-fill any remaining alignment gap to data_offset
+        let meta_digest_end = metadata_aligned + metadata_digest_size;
+        if data_offset > meta_digest_end {
+            let gap = (data_offset - meta_digest_end) as usize;
             writer.write_all(&vec![0u8; gap])?;
         }
 
@@ -431,9 +454,31 @@ impl PkgBuilder {
             }
         }
 
-        // Compute QA digest from plaintext if not manually set
+        // Compute QA digest from plaintext if not manually set.
+        //
+        // The QA digest is SHA-1 of (in order):
+        //   1. Each non-directory file's plaintext content
+        //   2. The serialized header (0x80 bytes, with qa_digest & klicensee still zeroed)
+        //   3. The file descriptor portion of the data area (entry table + file names)
+        // Then the first 16 bytes of the 20-byte SHA-1 become the QA digest.
         let qa_digest = if self.qa_digest == [0u8; 16] {
-            let sha = Sha1::from(&plaintext).digest().bytes(); // [u8; 20]
+            let mut hasher = Sha1::new();
+
+            // 1) Hash each non-directory file's data
+            for item in &self.items {
+                if !item.is_directory() {
+                    hasher.update(&item.data);
+                }
+            }
+
+            // 2) Hash the serialized header (qa_digest and klicensee are still zero)
+            let header_bytes = Self::serialize_header_fields(&header);
+            hasher.update(&header_bytes);
+
+            // 3) Hash the file descriptor portion (entry table + names, before file data)
+            hasher.update(&plaintext[..file_desc_length]);
+
+            let sha = hasher.digest().bytes(); // [u8; 20]
             let mut digest = [0u8; 16];
             digest.copy_from_slice(&sha[..16]);
             digest
@@ -445,10 +490,22 @@ impl PkgBuilder {
         header.qa_digest = qa_digest;
         header.header_digest = Self::compute_header_digest(&header);
         let (meta_buf, _) = self.build_metadata(total_size, &qa_digest);
+        let metadata_digest = Self::compute_metadata_digest(&meta_buf);
 
         Self::write_header(&mut writer, &header)?;
         writer.seek(SeekFrom::Start(metadata_offset as u64))?;
         writer.write_all(&meta_buf)?;
+
+        // Pad metadata to 16-byte alignment before writing metadata_digest
+        let meta_end = metadata_offset as u64 + meta_buf.len() as u64;
+        let metadata_aligned = (meta_end + 15) & !15;
+        if metadata_aligned > meta_end {
+            let padding = (metadata_aligned - meta_end) as usize;
+            writer.write_all(&vec![0u8; padding])?;
+        }
+
+        // Write metadata_digest (64 bytes after aligned metadata)
+        writer.write_all(&metadata_digest)?;
 
         // Encrypt the data area
         Self::encrypt_data(
@@ -486,19 +543,12 @@ impl PkgBuilder {
         out
     }
 
-    /// Compute the `header_digest` field.
+    /// Serialize the first 0x80 bytes of the header (everything before header_digest).
     ///
-    /// Serializes header bytes `0x00`–`0x7F` (everything before the digest
-    /// field) in big-endian, SHA-1 hashes the result, and places the 20-byte
-    /// hash into the first 20 bytes of the 64-byte digest field.
-    ///
-    /// The first 16 bytes of this digest are used as key material for
-    /// non-finalized NPDRM package encryption.
-    fn compute_header_digest(h: &PkgHeader) -> [u8; 64] {
-        let mut buf = [0u8; 0x80]; // 128 bytes = header fields before digest
+    /// Used for both QA digest computation and header_digest computation.
+    fn serialize_header_fields(h: &PkgHeader) -> [u8; 0x80] {
+        let mut buf = [0u8; 0x80];
         let mut cursor = io::Cursor::new(&mut buf[..]);
-
-        // Serialize header fields 0x00–0x7F in the same order as write_header
         cursor.write_u32::<BigEndian>(h.magic).unwrap();
         cursor.write_u16::<BigEndian>(h.release_type).unwrap();
         cursor.write_u16::<BigEndian>(h.platform).unwrap();
@@ -512,10 +562,45 @@ impl PkgBuilder {
         cursor.write_all(&h.content_id).unwrap();
         cursor.write_all(&h.qa_digest).unwrap();
         cursor.write_all(&h.klicensee).unwrap();
+        buf
+    }
+
+    /// Compute the `header_digest` field.
+    ///
+    /// Serializes header bytes `0x00`–`0x7F` (everything before the digest
+    /// field) in big-endian, SHA-1 hashes the result, and constructs a 64-byte
+    /// digest with structure:
+    /// - 0x00-0x0F (16 bytes): cmac_hash (null - we don't have the key)
+    /// - 0x10-0x37 (40 bytes): npdrm_signature (null - we don't have the signature)
+    /// - 0x38-0x3F (8 bytes): last 8 bytes of SHA-1 hash
+    ///
+    /// The first 16 bytes of this digest are used as key material for
+    /// non-finalized NPDRM package encryption.
+    fn compute_header_digest(h: &PkgHeader) -> [u8; 64] {
+        let buf = Self::serialize_header_fields(h);
 
         let sha = Sha1::from(buf).digest().bytes(); // [u8; 20]
         let mut digest = [0u8; 64];
-        digest[..20].copy_from_slice(&sha);
+        // First 16 bytes (cmac_hash): null (we don't have npdrm_pkg_ps3_aes_key)
+        // Next 40 bytes (npdrm_signature): null (we don't have ECDSA signature)
+        // Last 8 bytes: last 8 bytes of SHA-1 hash
+        digest[0x38..0x40].copy_from_slice(&sha[12..20]);
+        digest
+    }
+
+    /// Compute the metadata digest (64 bytes).
+    ///
+    /// Structure:
+    /// - 0x00-0x0F (16 bytes): cmac_hash (null - we don't have the key)
+    /// - 0x10-0x37 (40 bytes): npdrm_signature (null - we don't have the signature)
+    /// - 0x38-0x3F (8 bytes): last 8 bytes of SHA-1 hash of metadata
+    fn compute_metadata_digest(metadata: &[u8]) -> [u8; 64] {
+        let sha = Sha1::from(metadata).digest().bytes(); // [u8; 20]
+        let mut digest = [0u8; 64];
+        // First 16 bytes (cmac_hash): null (we don't have npdrm_pkg_ps3_aes_key)
+        // Next 40 bytes (npdrm_signature): null (we don't have ECDSA signature)
+        // Last 8 bytes: last 8 bytes of SHA-1 hash
+        digest[0x38..0x40].copy_from_slice(&sha[12..20]);
         digest
     }
 

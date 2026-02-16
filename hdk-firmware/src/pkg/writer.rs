@@ -443,6 +443,7 @@ impl PkgBuilder {
 
         // Update header and metadata with the final digest, then rewrite them
         header.qa_digest = qa_digest;
+        header.header_digest = Self::compute_header_digest(&header);
         let (meta_buf, _) = self.build_metadata(total_size, &qa_digest);
 
         Self::write_header(&mut writer, &header)?;
@@ -483,6 +484,39 @@ impl PkgBuilder {
         let len = std::cmp::min(src.len(), N);
         out[N - len..].copy_from_slice(&src[..len]);
         out
+    }
+
+    /// Compute the `header_digest` field.
+    ///
+    /// Serializes header bytes `0x00`–`0x7F` (everything before the digest
+    /// field) in big-endian, SHA-1 hashes the result, and places the 20-byte
+    /// hash into the first 20 bytes of the 64-byte digest field.
+    ///
+    /// The first 16 bytes of this digest are used as key material for
+    /// non-finalized NPDRM package encryption.
+    fn compute_header_digest(h: &PkgHeader) -> [u8; 64] {
+        let mut buf = [0u8; 0x80]; // 128 bytes = header fields before digest
+        let mut cursor = io::Cursor::new(&mut buf[..]);
+
+        // Serialize header fields 0x00–0x7F in the same order as write_header
+        cursor.write_u32::<BigEndian>(h.magic).unwrap();
+        cursor.write_u16::<BigEndian>(h.release_type).unwrap();
+        cursor.write_u16::<BigEndian>(h.platform).unwrap();
+        cursor.write_u32::<BigEndian>(h.metadata_offset).unwrap();
+        cursor.write_u32::<BigEndian>(h.metadata_count).unwrap();
+        cursor.write_u32::<BigEndian>(h.metadata_size).unwrap();
+        cursor.write_u32::<BigEndian>(h.item_count).unwrap();
+        cursor.write_u64::<BigEndian>(h.total_size).unwrap();
+        cursor.write_u64::<BigEndian>(h.data_offset).unwrap();
+        cursor.write_u64::<BigEndian>(h.data_size).unwrap();
+        cursor.write_all(&h.content_id).unwrap();
+        cursor.write_all(&h.qa_digest).unwrap();
+        cursor.write_all(&h.klicensee).unwrap();
+
+        let sha = Sha1::from(buf).digest().bytes(); // [u8; 20]
+        let mut digest = [0u8; 64];
+        digest[..20].copy_from_slice(&sha);
+        digest
     }
 
     /// Write the main header to the writer.

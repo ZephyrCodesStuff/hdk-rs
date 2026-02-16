@@ -312,6 +312,8 @@ pub mod metadata_id {
     pub const MAKE_PKG_REV: u32 = 0x05;
     pub const TITLE_ID: u32 = 0x06;
     pub const QA_DIGEST: u32 = 0x07;
+    pub const SOFTWARE_REVISION: u32 = 0x08;
+    pub const UNK_09: u32 = 0x09;
     /// Install directory (PS3). Format: 8-byte prefix + directory name.
     pub const INSTALL_DIR: u32 = 0x0A;
 }

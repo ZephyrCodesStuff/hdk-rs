@@ -569,11 +569,28 @@ impl PkgBuilder {
         );
         count += 1;
 
-        // 0x0A: Install Directory (8-byte prefix + directory name)
-        let mut install_buf = vec![0u8; 8 + self.install_directory.len()];
-        install_buf[8..].copy_from_slice(self.install_directory.as_bytes());
-        Self::write_metadata_packet(&mut buf, metadata_id::INSTALL_DIR, &install_buf);
+        // 0x08: Software Revision (8 bytes)
+        Self::write_metadata_packet(
+            &mut buf,
+            metadata_id::SOFTWARE_REVISION,
+            &[
+                0x80, // Unknown
+                0x04, 0x40, 0x00, // Firmware version (min: 4.40)
+                0x01, 0x00, // Package version 1.00
+                0x01, 0x87, // App version 1.87
+            ],
+        );
         count += 1;
+
+        // 0x09: unknown 2
+        Self::write_metadata_packet(&mut buf, metadata_id::UNK_09, &[0; 8]);
+        count += 1;
+
+        // // 0x0A: Install Directory (8-byte prefix + directory name)
+        // let mut install_buf = vec![0u8; 8 + self.install_directory.len()];
+        // install_buf[8..].copy_from_slice(self.install_directory.as_bytes());
+        // Self::write_metadata_packet(&mut buf, metadata_id::INSTALL_DIR, &install_buf);
+        // count += 1;
 
         (buf, count)
     }

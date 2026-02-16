@@ -561,16 +561,17 @@ mod tests {
         ];
 
         let mut buf = Vec::new();
-        PkgBuilder::new()
+        let mut pkg = PkgBuilder::new()
             .release_type(PkgReleaseType::Debug)
             .platform(PkgPlatform::PS3)
             .content_id("UP0001-TEST00001_00-0000000000000000")
             .title_id("TEST00001")
-            .qa_digest(qa)
-            .add_directory("USRDIR")
-            .add_file("USRDIR/hello.txt", b"Hello, PKG!".to_vec())
-            .write(io::Cursor::new(&mut buf))
-            .unwrap();
+            .qa_digest(qa);
+
+        pkg.add_directory("USRDIR");
+        pkg.add_file("USRDIR/hello.txt", b"Hello, PKG!".to_vec());
+
+        pkg.write(io::Cursor::new(&mut buf)).unwrap();
 
         // Read it back
         let mut pkg = PkgArchive::open(io::Cursor::new(&buf)).unwrap();
@@ -593,16 +594,15 @@ mod tests {
             0x0F, 0x10,
         ];
 
-        let mut buf = Vec::new();
-        PkgBuilder::new()
+        let buf = Vec::new();
+        let mut pkg = PkgBuilder::new()
             .release_type(PkgReleaseType::Release)
             .platform(PkgPlatform::PS3)
             .content_id("UP0001-TEST00002_00-0000000000000000")
             .title_id("TEST00002")
-            .klicensee(klic)
-            .add_file("EBOOT.BIN", vec![0x42; 64])
-            .write(io::Cursor::new(&mut buf))
-            .unwrap();
+            .klicensee(klic);
+
+        pkg.add_file("EBOOT.BIN", vec![0x42; 64]);
 
         // Read it back
         let mut pkg = PkgArchive::open(io::Cursor::new(&buf)).unwrap();
@@ -619,14 +619,15 @@ mod tests {
     #[test]
     fn handles_multiple_files() {
         let mut buf = Vec::new();
-        PkgBuilder::new()
-            .add_directory("data")
-            .add_file("data/file1.txt", b"content1".to_vec())
-            .add_file("data/file2.bin", vec![1, 2, 3, 4])
-            .add_directory("docs")
-            .add_file("docs/readme.txt", b"Read me!".to_vec())
-            .write(io::Cursor::new(&mut buf))
-            .unwrap();
+        let mut pkg = PkgBuilder::new();
+
+        pkg.add_directory("data");
+        pkg.add_file("data/file1.txt", b"content1".to_vec());
+        pkg.add_file("data/file2.bin", vec![1, 2, 3, 4]);
+        pkg.add_directory("docs");
+        pkg.add_file("docs/readme.txt", b"Read me!".to_vec());
+
+        pkg.write(io::Cursor::new(&mut buf)).unwrap();
 
         let mut pkg = PkgArchive::open(io::Cursor::new(&buf)).unwrap();
         assert_eq!(pkg.item_count(), 5);

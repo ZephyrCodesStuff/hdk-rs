@@ -294,7 +294,7 @@ impl<R: Read + Seek> PkgArchive<R> {
     ///     println!("{}", item.name);
     /// }
     /// ```
-    pub fn items(&mut self) -> Items<'_, R> {
+    pub const fn items(&mut self) -> Items<'_, R> {
         Items::new(self)
     }
 
@@ -520,7 +520,7 @@ impl<'a, R: Read + Seek> Iterator for Items<'a, R> {
                 let name = self
                     .archive
                     .read_entry_name(&entry)
-                    .map_or_else(|_| format!("__unnamed_{i:04}"), |s| s);
+                    .unwrap_or_else(|_| format!("__unnamed_{i:04}"));
 
                 Some(Ok(PkgItem {
                     index: i as u32,

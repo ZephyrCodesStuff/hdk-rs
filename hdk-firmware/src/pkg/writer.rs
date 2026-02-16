@@ -55,6 +55,9 @@ pub enum PkgWriteError {
 
     #[error("data area size exceeds u64::MAX")]
     DataOverflow,
+
+    #[error("PKG is missing PARAM.SFO. 2014 PS3 hardware requires this file for installation")]
+    MissingParamSfo,
 }
 
 // ---------------------------------------------------------------------------
@@ -70,21 +73,36 @@ struct BuilderItem {
 }
 
 impl BuilderItem {
-    /// Create a new file item.
+    /// Overwrite-allowed flag — RPCS3 skips files without this bit
+    /// if they already exist on disk.
+    ///
+    /// TODO: make this configurable
+    const OVERWRITE: u32 = 0x8000_0000;
+
+    /// Create a new raw-data file item (file_type = 0x03).
     const fn file(name: String, data: Vec<u8>) -> Self {
         Self {
             name,
             data,
-            flags: 0x00_00_00_01, // file_type = 0x01
+            flags: Self::OVERWRITE | 0x03, // overwrite + raw data
         }
     }
 
-    /// Create a new directory item.
+    /// Create a new NPDRM SELF file item (file_type = 0x01).
+    const fn self_file(name: String, data: Vec<u8>) -> Self {
+        Self {
+            name,
+            data,
+            flags: Self::OVERWRITE | 0x01, // overwrite + SELF
+        }
+    }
+
+    /// Create a new directory item (file_type = 0x04).
     const fn directory(name: String) -> Self {
         Self {
             name,
             data: Vec::new(),
-            flags: 0x00_00_00_04, // file_type = 0x04
+            flags: Self::OVERWRITE | 0x04, // overwrite + directory
         }
     }
 
@@ -116,17 +134,13 @@ pub struct PkgBuilder {
     qa_digest: [u8; 16],
     klicensee: [u8; 16],
 
-    // Extended header fields
+    // Metadata fields (written as TLV packets in the metadata section)
     drm_type: u32,
     content_type: u32,
-    package_type: u16,
-    package_flag: u16,
+    package_type: u32,
     npdrm_revision: u16,
     package_version: u16,
     title_id: String,
-    ext_qa_digest: [u8; 16],
-    system_version: u32,
-    app_version: u32,
     install_directory: String,
 
     // Items
@@ -158,14 +172,10 @@ impl PkgBuilder {
 
             drm_type: PkgDrmType::Free as u32,
             content_type: PkgContentType::GameData as u32,
-            package_type: 0,
-            package_flag: 0,
-            npdrm_revision: 0,
-            package_version: 0,
+            package_type: 0x4E, // TODO: https://www.psdevwiki.com/ps3/PKG_files#PackageType
+            npdrm_revision: 0x1732,
+            package_version: 0x0100,
             title_id: "XXXX00000".to_string(),
-            ext_qa_digest: [0u8; 16],
-            system_version: 0,
-            app_version: 0,
             install_directory: "XXXX00000".to_string(),
 
             items: Vec::new(),
@@ -201,7 +211,6 @@ impl PkgBuilder {
     /// Set the QA digest (used as key material for debug encryption).
     pub const fn qa_digest(mut self, digest: [u8; 16]) -> Self {
         self.qa_digest = digest;
-        self.ext_qa_digest = digest; // Keep both in sync by default
         self
     }
 
@@ -229,21 +238,15 @@ impl PkgBuilder {
         self
     }
 
+    /// Set the package type.
+    pub const fn package_type(mut self, pt: u32) -> Self {
+        self.package_type = pt;
+        self
+    }
+
     /// Set the title ID (max 9 bytes, will be NUL-padded).
     pub fn title_id(mut self, id: &str) -> Self {
         self.title_id = id.to_string();
-        self
-    }
-
-    /// Set the system version.
-    pub const fn system_version(mut self, ver: u32) -> Self {
-        self.system_version = ver;
-        self
-    }
-
-    /// Set the app version.
-    pub const fn app_version(mut self, ver: u32) -> Self {
-        self.app_version = ver;
         self
     }
 
@@ -258,6 +261,12 @@ impl PkgBuilder {
     /// Add a file to the package.
     pub fn add_file(&mut self, name: &str, data: Vec<u8>) {
         self.items.push(BuilderItem::file(name.to_string(), data));
+    }
+
+    /// Add a SELF file to the package (for NPDRM content).
+    pub fn add_self_file(&mut self, name: &str, data: Vec<u8>) {
+        self.items
+            .push(BuilderItem::self_file(name.to_string(), data));
     }
 
     /// Add a directory to the package.
@@ -277,7 +286,7 @@ impl PkgBuilder {
     ///
     /// This method consumes the builder and writes:
     /// 1. Main header (0x00–0xBF)
-    /// 2. Extended header (0xB0–0x10F)
+    /// 2. Metadata section (TLV packets starting at 0xC0)
     /// 3. Encrypted data area (item table + names + file data)
     pub fn write<W: Write + Seek>(self, mut writer: W) -> Result<(), PkgWriteError> {
         // Validate fields
@@ -296,8 +305,22 @@ impl PkgBuilder {
             }
         }
 
+        // Warn if PARAM.SFO is missing (required by PS3 hardware)
+        if !self.items.iter().any(|i| i.name == "PARAM.SFO") {
+            eprintln!(
+                "warning: PKG is missing PARAM.SFO — PS3 hardware requires this file for installation"
+            );
+        }
+
+        // Build metadata with placeholder total_size to determine its size
+        let (placeholder_meta, metadata_count) = self.build_metadata(0);
+        let metadata_offset = PKG_HEADER_SIZE as u32; // 0xC0
+        let metadata_size = placeholder_meta.len() as u32;
+
+        // Calculate data_offset dynamically (16-byte aligned after metadata)
+        let data_offset = ((metadata_offset as u64 + metadata_size as u64) + 15) & !15;
+
         // Calculate data area layout
-        let data_offset: u64 = 0x0110; // Standard offset after headers
         let item_count = self.items.len() as u32;
         let entry_table_size = (item_count as usize) * PKG_FILE_ENTRY_SIZE;
 
@@ -338,14 +361,17 @@ impl PkgBuilder {
         let data_size = current_offset as u64;
         let total_size = data_offset + data_size;
 
+        // Rebuild metadata with the correct total_size
+        let (meta_buf, _) = self.build_metadata(total_size);
+
         // Build the main header
         let header = PkgHeader {
             magic: PKG_MAGIC,
             release_type: self.release_type,
             platform: self.platform,
-            metadata_offset: 0,
-            metadata_count: 0,
-            metadata_size: 0,
+            metadata_offset,
+            metadata_count,
+            metadata_size,
             item_count,
             total_size,
             data_offset,
@@ -353,27 +379,22 @@ impl PkgBuilder {
             content_id: Self::pad_bytes::<48>(self.content_id.as_bytes()),
             qa_digest: self.qa_digest,
             klicensee: self.klicensee,
-            header_digest: [0u8; 64], // Could compute SHA-256, but often zero
+            header_digest: [0; 64],
         };
 
-        // Build the extended header
-        let ext_header = PkgExtendedHeader {
-            drm_type: self.drm_type,
-            content_type: self.content_type,
-            package_type: self.package_type,
-            package_flag: self.package_flag,
-            npdrm_revision: self.npdrm_revision,
-            package_version: self.package_version,
-            title_id: Self::pad_bytes::<9>(self.title_id.as_bytes()),
-            qa_digest: self.ext_qa_digest,
-            system_version: self.system_version,
-            app_version: self.app_version,
-            install_directory: Self::pad_bytes::<32>(self.install_directory.as_bytes()),
-        };
-
-        // Write headers
+        // Write main header (0x00–0xBF)
         Self::write_header(&mut writer, &header)?;
-        Self::write_ext_header(&mut writer, &ext_header)?;
+
+        // Write metadata section (0xC0+)
+        writer.seek(SeekFrom::Start(metadata_offset as u64))?;
+        writer.write_all(&meta_buf)?;
+
+        // Zero-fill the alignment gap between metadata end and data_offset
+        let meta_end = metadata_offset as u64 + meta_buf.len() as u64;
+        if data_offset > meta_end {
+            let gap = (data_offset - meta_end) as usize;
+            writer.write_all(&vec![0u8; gap])?;
+        }
 
         // Prepare plaintext data area
         let mut plaintext = vec![0u8; data_size as usize];
@@ -454,31 +475,83 @@ impl PkgBuilder {
         Ok(())
     }
 
-    /// Write the extended header to the writer.
-    fn write_ext_header<W: Write + Seek>(w: &mut W, eh: &PkgExtendedHeader) -> io::Result<()> {
-        w.seek(SeekFrom::Start(0xB0))?;
-        w.write_u32::<BigEndian>(eh.drm_type)?;
-        w.write_u32::<BigEndian>(eh.content_type)?;
-        w.write_u16::<BigEndian>(eh.package_type)?;
-        w.write_u16::<BigEndian>(eh.package_flag)?;
-        w.write_u16::<BigEndian>(eh.npdrm_revision)?;
-        w.write_u16::<BigEndian>(eh.package_version)?;
+    /// Build the metadata section as a TLV binary blob.
+    ///
+    /// Returns the serialized metadata buffer and the number of packets.
+    /// `total_size` is the total PKG file size (used for metadata ID 0x04).
+    fn build_metadata(&self, total_size: u64) -> (Vec<u8>, u32) {
+        let mut buf = Vec::new();
+        let mut count = 0u32;
 
-        // Padding + title_id at 0xC4
-        w.seek(SeekFrom::Start(0xC4))?;
-        w.write_all(&eh.title_id)?;
-        w.write_all(&eh.qa_digest)?;
+        // 0x01: DRM Type
+        Self::write_metadata_packet(
+            &mut buf,
+            metadata_id::DRM_TYPE,
+            &self.drm_type.to_be_bytes(),
+        );
+        count += 1;
 
-        // System/app version at 0xE4
-        w.seek(SeekFrom::Start(0xE4))?;
-        w.write_u32::<BigEndian>(eh.system_version)?;
-        w.write_u32::<BigEndian>(eh.app_version)?;
+        // 0x02: Content Type
+        Self::write_metadata_packet(
+            &mut buf,
+            metadata_id::CONTENT_TYPE,
+            &self.content_type.to_be_bytes(),
+        );
+        count += 1;
 
-        // Install directory at 0xF0
-        w.seek(SeekFrom::Start(0xF0))?;
-        w.write_all(&eh.install_directory)?;
+        // 0x03: Package Type
+        Self::write_metadata_packet(
+            &mut buf,
+            metadata_id::PACKAGE_TYPE,
+            &self.package_type.to_be_bytes(),
+        );
+        count += 1;
 
-        Ok(())
+        // 0x04: Package Size (total PKG file size)
+        Self::write_metadata_packet(
+            &mut buf,
+            metadata_id::PACKAGE_SIZE,
+            &total_size.to_be_bytes(),
+        );
+        count += 1;
+
+        // 0x05: Make Pkg / NPDRM Revision (4 bytes, only data)
+        let mut rev = [0u8; 4];
+        rev[0..2].copy_from_slice(&self.npdrm_revision.to_be_bytes());
+        rev[2..4].copy_from_slice(&self.package_version.to_be_bytes());
+        Self::write_metadata_packet(&mut buf, metadata_id::MAKE_PKG_REV, &rev);
+        count += 1;
+
+        // 0x06: Title ID (must be 12 bytes, NUL-padded)
+        Self::write_metadata_packet(
+            &mut buf,
+            metadata_id::TITLE_ID,
+            &Self::pad_bytes::<12>(self.title_id.as_bytes()),
+        );
+        count += 1;
+
+        // 0x07: QA Digest (must be 24 bytes, zero-padded)
+        Self::write_metadata_packet(
+            &mut buf,
+            metadata_id::QA_DIGEST,
+            &Self::pad_bytes::<24>(&self.qa_digest),
+        );
+        count += 1;
+
+        // 0x0A: Install Directory (8-byte prefix + directory name)
+        let mut install_buf = vec![0u8; 8 + self.install_directory.len()];
+        install_buf[8..].copy_from_slice(self.install_directory.as_bytes());
+        Self::write_metadata_packet(&mut buf, metadata_id::INSTALL_DIR, &install_buf);
+        count += 1;
+
+        (buf, count)
+    }
+
+    /// Write a single TLV metadata packet to a buffer.
+    fn write_metadata_packet(buf: &mut Vec<u8>, id: u32, data: &[u8]) {
+        buf.extend_from_slice(&id.to_be_bytes());
+        buf.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        buf.extend_from_slice(data);
     }
 
     /// Encrypt the data area in-place based on the release type.

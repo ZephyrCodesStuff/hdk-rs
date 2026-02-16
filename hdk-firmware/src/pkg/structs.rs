@@ -5,7 +5,7 @@
 //! | Region           | Offset          | Notes                              |
 //! |------------------|-----------------|------------------------------------|
 //! | Main header      | `0x00`–`0xBF`   | Always plaintext                   |
-//! | Extended header  | `0xB0`–`0x10F`  | Always plaintext                   |
+//! | Metadata (TLV)   | `0xC0`–variable | Always plaintext, id/size/payload  |
 //! | File entry table | `data_offset`   | Encrypted for retail, plain debug  |
 //! | File names       | (relative)      | Encrypted for retail, plain debug  |
 //! | File data        | (relative)      | Encrypted for retail, plain debug  |
@@ -175,6 +175,43 @@ impl TryFrom<u32> for PkgContentType {
     }
 }
 
+/// Known content type values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u32)]
+pub enum PkgEntryType {
+    NpDRM = 1,
+    NpDRMEDAT = 2,
+    Regular = 3,
+    Folder = 4,
+    Unk0 = 5,
+    Unk1 = 6,
+    Sdat = 9,
+
+    Overwrite = 0x80000000,
+    Psp = 0x10000000,
+
+    /// Bits we know the meaning of.
+    ///
+    /// Mask for these to understand the entry type, ignoring unknown flags.
+    KnownBits = 0xff | 0x10000000 | 0x80000000,
+}
+
+impl TryFrom<u32> for PkgEntryType {
+    type Error = u32;
+    fn try_from(v: u32) -> Result<Self, u32> {
+        match v & Self::KnownBits as u32 {
+            1 => Ok(Self::NpDRM),
+            2 => Ok(Self::NpDRMEDAT),
+            3 => Ok(Self::Regular),
+            4 => Ok(Self::Folder),
+            5 => Ok(Self::Unk0),
+            6 => Ok(Self::Unk1),
+            9 => Ok(Self::Sdat),
+            other => Err(other),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Header structs
 // ---------------------------------------------------------------------------
@@ -262,83 +299,143 @@ impl fmt::Display for PkgHeader {
 
 // ---------------------------------------------------------------------------
 
-/// Extended header fields at various fixed offsets past the main header.
+/// Well-known metadata packet IDs used in the TLV metadata section.
 ///
-/// ```text
-/// 0xB0  u32       drm_type
-/// 0xB4  u32       content_type
-/// 0xB8  u16       package_type
-/// 0xBA  u16       package_flag
-/// 0xBC  u16       make_package_npdrm_revision
-/// 0xBE  u16       package_version
-/// 0xC0  [u8;4]    (padding)
-/// 0xC4  [u8;9]    title_id  (null-padded ASCII)
-/// 0xCD  [u8;16]   qa_digest
-/// 0xDD  [u8;7]    (padding)
-/// 0xE4  u32       system_version
-/// 0xE8  u32       app_version
-/// 0xEC  [u8;4]    (padding)
-/// 0xF0  [u8;32]   install_directory  (null-padded ASCII)
-/// ```
+/// The metadata section is a sequence of `[u32 id, u32 size, payload]`
+/// packets located at the offset given by the main header's
+/// `metadata_offset` field.
+pub mod metadata_id {
+    pub const DRM_TYPE: u32 = 0x01;
+    pub const CONTENT_TYPE: u32 = 0x02;
+    pub const PACKAGE_TYPE: u32 = 0x03;
+    pub const PACKAGE_SIZE: u32 = 0x04;
+    pub const MAKE_PKG_REV: u32 = 0x05;
+    pub const TITLE_ID: u32 = 0x06;
+    pub const QA_DIGEST: u32 = 0x07;
+    /// Install directory (PS3). Format: 8-byte prefix + directory name.
+    pub const INSTALL_DIR: u32 = 0x0A;
+}
+
+/// A single parsed TLV metadata packet from the metadata section.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PkgExtendedHeader {
-    pub drm_type: u32,
-    pub content_type: u32,
-    pub package_type: u16,
-    pub package_flag: u16,
-    pub npdrm_revision: u16,
-    pub package_version: u16,
-    pub title_id: [u8; 9],
-    pub qa_digest: [u8; 16],
-    pub system_version: u32,
-    pub app_version: u32,
-    pub install_directory: [u8; 32],
+pub struct PkgMetadataPacket {
+    pub id: u32,
+    pub data: Vec<u8>,
 }
 
-impl PkgExtendedHeader {
-    /// Title-ID as a `&str`, stripping trailing NULs.
+/// Parsed metadata section from a PKG file.
+///
+/// Replaces the old fixed-offset `PkgExtendedHeader`. The PS3 hardware
+/// reads these TLV packets (pointed to by `metadata_offset` in the main
+/// header) to determine DRM type, content type, title ID, etc.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PkgMetadata {
+    pub packets: Vec<PkgMetadataPacket>,
+}
+
+impl PkgMetadata {
+    /// Find the first packet with the given ID.
+    pub fn find(&self, id: u32) -> Option<&PkgMetadataPacket> {
+        self.packets.iter().find(|p| p.id == id)
+    }
+
+    /// Read a u32 value from the first packet with the given ID.
+    pub fn get_u32(&self, id: u32) -> Option<u32> {
+        self.find(id).and_then(|p| {
+            if p.data.len() >= 4 {
+                Some(u32::from_be_bytes([
+                    p.data[0], p.data[1], p.data[2], p.data[3],
+                ]))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Read a u64 value from the first packet with the given ID.
+    pub fn get_u64(&self, id: u32) -> Option<u64> {
+        self.find(id).and_then(|p| {
+            if p.data.len() >= 8 {
+                Some(u64::from_be_bytes([
+                    p.data[0], p.data[1], p.data[2], p.data[3], p.data[4], p.data[5], p.data[6],
+                    p.data[7],
+                ]))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Read a NUL-trimmed string from the first packet with the given ID.
+    pub fn get_string(&self, id: u32) -> Option<&str> {
+        self.find(id).and_then(|p| {
+            let end = p.data.iter().position(|&b| b == 0).unwrap_or(p.data.len());
+            core::str::from_utf8(&p.data[..end]).ok()
+        })
+    }
+
+    // Convenience accessors matching old PkgExtendedHeader API
+
+    /// DRM type value.
+    pub fn drm_type(&self) -> Option<u32> {
+        self.get_u32(metadata_id::DRM_TYPE)
+    }
+
+    /// Content type value.
+    pub fn content_type(&self) -> Option<u32> {
+        self.get_u32(metadata_id::CONTENT_TYPE)
+    }
+
+    /// Package type value.
+    pub fn package_type(&self) -> Option<u32> {
+        self.get_u32(metadata_id::PACKAGE_TYPE)
+    }
+
+    /// Title-ID as a `&str`.
     pub fn title_id_str(&self) -> &str {
-        let end = self
-            .title_id
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(self.title_id.len());
-        core::str::from_utf8(&self.title_id[..end]).unwrap_or("<invalid UTF-8>")
+        self.get_string(metadata_id::TITLE_ID).unwrap_or("")
     }
 
-    /// Install directory as a `&str`, stripping trailing NULs.
+    /// Install directory as a `&str`.
+    ///
+    /// The install dir metadata packet (0x0A) has an 8-byte prefix followed
+    /// by the directory name. This accessor skips the prefix automatically.
     pub fn install_directory_str(&self) -> &str {
-        let end = self
-            .install_directory
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(self.install_directory.len());
-        core::str::from_utf8(&self.install_directory[..end]).unwrap_or("<invalid UTF-8>")
+        self.find(metadata_id::INSTALL_DIR)
+            .and_then(|p| {
+                if p.data.len() > 8 {
+                    let name = &p.data[8..];
+                    let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+                    core::str::from_utf8(&name[..end]).ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("")
     }
 
-    /// Attempt to interpret the raw `drm_type` as [`PkgDrmType`].
+    /// Attempt to interpret the DRM type as [`PkgDrmType`].
     pub fn drm_type_enum(&self) -> Result<PkgDrmType, u32> {
-        PkgDrmType::try_from(self.drm_type)
+        PkgDrmType::try_from(self.drm_type().unwrap_or(0))
     }
 
-    /// Attempt to interpret the raw `content_type` as [`PkgContentType`].
+    /// Attempt to interpret the content type as [`PkgContentType`].
     pub fn content_type_enum(&self) -> Result<PkgContentType, u32> {
-        PkgContentType::try_from(self.content_type)
+        PkgContentType::try_from(self.content_type().unwrap_or(0))
     }
 }
 
-impl fmt::Display for PkgExtendedHeader {
+impl fmt::Display for PkgMetadata {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "PkgExtendedHeader(title_id=\"{}\", drm={:#x}, content={:#x}, \
-             pkg_ver={:#06x}, sys_ver={:#010x}, install_dir=\"{}\")",
+            "PkgMetadata(title_id=\"{}\", drm={:#x}, content={:#x}, \
+             install_dir=\"{}\", packets={})",
             self.title_id_str(),
-            self.drm_type,
-            self.content_type,
-            self.package_version,
-            self.system_version,
+            self.drm_type().unwrap_or(0),
+            self.content_type().unwrap_or(0),
             self.install_directory_str(),
+            self.packets.len(),
         )
     }
 }

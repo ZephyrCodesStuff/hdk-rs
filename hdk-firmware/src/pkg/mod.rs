@@ -8,7 +8,7 @@ pub mod writer;
 
 pub use reader::{Items, PkgArchive, PkgError, PkgItemReader};
 pub use structs::{
-    PKG_MAGIC, PS3_AES_KEY, PSP_AES_KEY, PkgContentType, PkgDrmType, PkgExtendedHeader,
-    PkgFileEntry, PkgHeader, PkgItem, PkgPlatform, PkgReleaseType,
+    PKG_MAGIC, PS3_AES_KEY, PSP_AES_KEY, PkgContentType, PkgDrmType, PkgFileEntry, PkgHeader,
+    PkgItem, PkgPlatform, PkgReleaseType,
 };
 pub use writer::{PkgBuilder, PkgWriteError};

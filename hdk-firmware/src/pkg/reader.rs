@@ -77,7 +77,7 @@ pub enum PkgError {
 pub struct PkgArchive<R: Read + Seek> {
     inner: R,
     header: PkgHeader,
-    ext_header: PkgExtendedHeader,
+    metadata: PkgMetadata,
     file_size: u64,
     /// Default AES key selected from the platform field (PS3 or PSP).
     aes_key: [u8; 16],
@@ -154,45 +154,20 @@ impl<R: Read + Seek> PkgArchive<R> {
             return Err(PkgError::DataOutOfBounds);
         }
 
-        // ---- extended header (0xB0+) ----
-        inner.seek(SeekFrom::Start(0xB0))?;
-        let drm_type = inner.read_u32::<BigEndian>()?;
-        let content_type = inner.read_u32::<BigEndian>()?;
-        let package_type = inner.read_u16::<BigEndian>()?;
-        let package_flag = inner.read_u16::<BigEndian>()?;
-        let npdrm_revision = inner.read_u16::<BigEndian>()?;
-        let package_version = inner.read_u16::<BigEndian>()?;
-
-        // 0xC0 – 4 bytes padding, then Title-ID at 0xC4
-        inner.seek(SeekFrom::Start(0xC4))?;
-        let mut title_id = [0u8; 9];
-        inner.read_exact(&mut title_id)?;
-        let mut qa_digest = [0u8; 16];
-        inner.read_exact(&mut qa_digest)?;
-
-        // 0xE4
-        inner.seek(SeekFrom::Start(0xE4))?;
-        let system_version = inner.read_u32::<BigEndian>()?;
-        let app_version = inner.read_u32::<BigEndian>()?;
-
-        // 0xF0 – install directory
-        inner.seek(SeekFrom::Start(0xF0))?;
-        let mut install_directory = [0u8; 32];
-        inner.read_exact(&mut install_directory)?;
-
-        let ext_header = PkgExtendedHeader {
-            drm_type,
-            content_type,
-            package_type,
-            package_flag,
-            npdrm_revision,
-            package_version,
-            title_id,
-            qa_digest,
-            system_version,
-            app_version,
-            install_directory,
+        // ---- metadata section (TLV packets) ----
+        let mut metadata = PkgMetadata {
+            packets: Vec::new(),
         };
+        if metadata_offset > 0 && metadata_count > 0 {
+            inner.seek(SeekFrom::Start(metadata_offset as u64))?;
+            for _ in 0..metadata_count {
+                let id = inner.read_u32::<BigEndian>()?;
+                let size = inner.read_u32::<BigEndian>()?;
+                let mut data = vec![0u8; size as usize];
+                inner.read_exact(&mut data)?;
+                metadata.packets.push(PkgMetadataPacket { id, data });
+            }
+        }
 
         // Select default AES key from platform.
         let aes_key = if platform == PkgPlatform::PSP as u16 {
@@ -204,7 +179,7 @@ impl<R: Read + Seek> PkgArchive<R> {
         Ok(Self {
             inner,
             header,
-            ext_header,
+            metadata,
             file_size,
             aes_key,
         })
@@ -217,9 +192,9 @@ impl<R: Read + Seek> PkgArchive<R> {
         &self.header
     }
 
-    /// Reference to the parsed extended header.
-    pub const fn ext_header(&self) -> &PkgExtendedHeader {
-        &self.ext_header
+    /// Reference to the parsed metadata section.
+    pub const fn metadata(&self) -> &PkgMetadata {
+        &self.metadata
     }
 
     /// Whether the release-type field indicates a retail (encrypted with AES)
@@ -777,7 +752,6 @@ mod tests {
             pkg.header().content_id_str(),
             "UP0001-TEST00001_00-0000000000000000"
         );
-        assert_eq!(pkg.ext_header().title_id_str(), "TEST00001");
     }
 
     #[test]

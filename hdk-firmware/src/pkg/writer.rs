@@ -208,7 +208,11 @@ impl PkgBuilder {
         self
     }
 
-    /// Set the QA digest (used as key material for debug encryption).
+    /// Set the QA digest manually, overriding automatic computation.
+    ///
+    /// By default (`[0u8; 16]`), the writer computes the QA digest
+    /// automatically as `SHA-1(plaintext_data_area)[0..16]`.
+    /// Setting a non-zero value here bypasses that computation.
     pub const fn qa_digest(mut self, digest: [u8; 16]) -> Self {
         self.qa_digest = digest;
         self
@@ -313,7 +317,7 @@ impl PkgBuilder {
         }
 
         // Build metadata with placeholder total_size to determine its size
-        let (placeholder_meta, metadata_count) = self.build_metadata(0);
+        let (placeholder_meta, metadata_count) = self.build_metadata(0, &self.qa_digest);
         let metadata_offset = PKG_HEADER_SIZE as u32; // 0xC0
         let metadata_size = placeholder_meta.len() as u32;
 
@@ -362,10 +366,10 @@ impl PkgBuilder {
         let total_size = data_offset + data_size;
 
         // Rebuild metadata with the correct total_size
-        let (meta_buf, _) = self.build_metadata(total_size);
+        let (meta_buf, _) = self.build_metadata(total_size, &self.qa_digest);
 
-        // Build the main header
-        let header = PkgHeader {
+        // Build the main header (placeholder — will rewrite after computing qa_digest)
+        let mut header = PkgHeader {
             magic: PKG_MAGIC,
             release_type: self.release_type,
             platform: self.platform,
@@ -382,10 +386,10 @@ impl PkgBuilder {
             header_digest: [0; 64],
         };
 
-        // Write main header (0x00–0xBF)
+        // Write main header (0x00–0xBF) — will rewrite after computing qa_digest
         Self::write_header(&mut writer, &header)?;
 
-        // Write metadata section (0xC0+)
+        // Write metadata section (0xC0+) — will rewrite after computing qa_digest
         writer.seek(SeekFrom::Start(metadata_offset as u64))?;
         writer.write_all(&meta_buf)?;
 
@@ -427,6 +431,24 @@ impl PkgBuilder {
             }
         }
 
+        // Compute QA digest from plaintext if not manually set
+        let qa_digest = if self.qa_digest == [0u8; 16] {
+            let sha = Sha1::from(&plaintext).digest().bytes(); // [u8; 20]
+            let mut digest = [0u8; 16];
+            digest.copy_from_slice(&sha[..16]);
+            digest
+        } else {
+            self.qa_digest
+        };
+
+        // Update header and metadata with the final digest, then rewrite them
+        header.qa_digest = qa_digest;
+        let (meta_buf, _) = self.build_metadata(total_size, &qa_digest);
+
+        Self::write_header(&mut writer, &header)?;
+        writer.seek(SeekFrom::Start(metadata_offset as u64))?;
+        writer.write_all(&meta_buf)?;
+
         // Encrypt the data area
         Self::encrypt_data(
             &mut plaintext,
@@ -455,6 +477,14 @@ impl PkgBuilder {
         out
     }
 
+    /// Pad a byte slice to a fixed length with NULs, but inserting the bytes at the start.
+    fn pad_bytes_prefix<const N: usize>(src: &[u8]) -> [u8; N] {
+        let mut out = [0u8; N];
+        let len = std::cmp::min(src.len(), N);
+        out[N - len..].copy_from_slice(&src[..len]);
+        out
+    }
+
     /// Write the main header to the writer.
     fn write_header<W: Write + Seek>(w: &mut W, h: &PkgHeader) -> io::Result<()> {
         w.seek(SeekFrom::Start(0))?;
@@ -479,7 +509,8 @@ impl PkgBuilder {
     ///
     /// Returns the serialized metadata buffer and the number of packets.
     /// `total_size` is the total PKG file size (used for metadata ID 0x04).
-    fn build_metadata(&self, total_size: u64) -> (Vec<u8>, u32) {
+    /// `qa_digest` is the 16-byte digest to embed in metadata packet 0x07.
+    fn build_metadata(&self, total_size: u64, qa_digest: &[u8; 16]) -> (Vec<u8>, u32) {
         let mut buf = Vec::new();
         let mut count = 0u32;
 
@@ -534,7 +565,7 @@ impl PkgBuilder {
         Self::write_metadata_packet(
             &mut buf,
             metadata_id::QA_DIGEST,
-            &Self::pad_bytes::<24>(&self.qa_digest),
+            &Self::pad_bytes_prefix::<24>(qa_digest),
         );
         count += 1;
 

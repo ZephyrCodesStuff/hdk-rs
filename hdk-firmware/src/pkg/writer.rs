@@ -486,8 +486,17 @@ impl PkgBuilder {
             self.qa_digest
         };
 
+        // Compute klicensee by encrypting zeros with SHA-1 stream cipher keyed on QA digest
+        // with counter set to 0xFFFFFFFFFFFFFFFF (matching Python reference implementation).
+        let klicensee = if self.klicensee == [0u8; 16] {
+            Self::compute_klicensee(&qa_digest)
+        } else {
+            self.klicensee
+        };
+
         // Update header and metadata with the final digest, then rewrite them
         header.qa_digest = qa_digest;
+        header.klicensee = klicensee;
         header.header_digest = Self::compute_header_digest(&header);
         let (meta_buf, _) = self.build_metadata(total_size, &qa_digest);
         let metadata_digest = Self::compute_metadata_digest(&meta_buf);
@@ -563,6 +572,28 @@ impl PkgBuilder {
         cursor.write_all(&h.qa_digest).unwrap();
         cursor.write_all(&h.klicensee).unwrap();
         buf
+    }
+
+    /// Compute klicensee by encrypting 16 zero bytes with SHA-1 stream cipher.
+    ///
+    /// Uses the QA digest as the key and counter value 0xFFFFFFFFFFFFFFFF.
+    /// This matches the Python reference implementation's behavior.
+    fn compute_klicensee(qa_digest: &[u8; 16]) -> [u8; 16] {
+        // Build SHA-1 input template (same format as debug encryption)
+        let mut sha_input = [0u8; 64];
+        sha_input[0..8].copy_from_slice(&qa_digest[0..8]);
+        sha_input[8..16].copy_from_slice(&qa_digest[0..8]);
+        sha_input[16..24].copy_from_slice(&qa_digest[8..16]);
+        sha_input[24..32].copy_from_slice(&qa_digest[8..16]);
+
+        // Set counter to 0xFFFFFFFFFFFFFFFF
+        sha_input[56..64].copy_from_slice(&0xFFFFFFFFFFFFFFFFu64.to_be_bytes());
+
+        // Hash and XOR with zeros (which just returns the hash bytes)
+        let hash = Sha1::from(sha_input).digest().bytes();
+        let mut klicensee = [0u8; 16];
+        klicensee.copy_from_slice(&hash[..16]);
+        klicensee
     }
 
     /// Compute the `header_digest` field.

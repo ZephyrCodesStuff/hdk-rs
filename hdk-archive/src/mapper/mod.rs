@@ -59,32 +59,9 @@ const SLOW_PATTERNS: [&str; 1] = [
 ];
 
 /// Common scene file extensions to help with mapping variations.
-const SCENE_EXTENSIONS: [&str; 26] = [
-    "ani",
-    "atmos",
-    "atmosdev",
-    "bar",
-    "bin",
-    "bnk",
-    "cdata",
-    "dds",
-    "efx",
-    "fnt",
-    "hkx",
-    "lua",
-    "luac",
-    "mdl",
-    "mp3",
-    "png",
-    "probe",
-    "scene",
-    "scene_extras",
-    "schema",
-    "skn",
-    "sharc",
-    "sho",
-    "sql",
-    "txt",
+const SCENE_EXTENSIONS: [&str; 25] = [
+    "ani", "atmos", "atmosdev", "bar", "bin", "bnk", "cdata", "dds", "efx", "fnt", "hkx", "lua",
+    "luac", "mdl", "mp3", "png", "probe", "scene", "schema", "skn", "sharc", "sho", "sql", "txt",
     "xml",
 ];
 
@@ -342,10 +319,10 @@ impl Mapper {
                     // Generate scene extension variants for the plain path (non-UUID)
                     if let Some(base) = SCENE_EXTENSIONS
                         .iter()
-                        .find_map(|ext| path_str.strip_suffix(ext))
+                        .find_map(|ext| path_str.strip_suffix(format!(".{ext}").as_str()))
                     {
                         for extension in SCENE_EXTENSIONS.iter() {
-                            let scene_val = format!("{base}{extension}");
+                            let scene_val = format!("{base}.{extension}");
                             let hashed_val = AfsHash::new_from_str(&scene_val);
                             local_matches.insert(hashed_val, scene_val.clone());
 
@@ -356,6 +333,11 @@ impl Mapper {
                                 local_matches.insert(hashed_uuid, scene_uuid);
                             }
                         }
+
+                        // Also try _EXTRAS.SCENE
+                        let extras_val = format!("{base}_extras.scene");
+                        let hashed_extras = AfsHash::new_from_str(&extras_val);
+                        local_matches.insert(hashed_extras, extras_val.clone());
                     }
 
                     // Insert the plain path

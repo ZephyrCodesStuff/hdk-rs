@@ -59,9 +59,33 @@ const SLOW_PATTERNS: [&str; 1] = [
 ];
 
 /// Common scene file extensions to help with mapping variations.
-const SCENE_EXTENSIONS: [&str; 24] = [
-    "ani", "atmos", "bar", "bin", "bnk", "cdata", "dds", "efx", "fnt", "hkx", "lua", "luac", "mdl",
-    "mp3", "png", "probe", "scene", "schema", "skn", "sharc", "sho", "sql", "txt", "xml",
+const SCENE_EXTENSIONS: [&str; 26] = [
+    "ani",
+    "atmos",
+    "atmosdev",
+    "bar",
+    "bin",
+    "bnk",
+    "cdata",
+    "dds",
+    "efx",
+    "fnt",
+    "hkx",
+    "lua",
+    "luac",
+    "mdl",
+    "mp3",
+    "png",
+    "probe",
+    "scene",
+    "scene_extras",
+    "schema",
+    "skn",
+    "sharc",
+    "sho",
+    "sql",
+    "txt",
+    "xml",
 ];
 
 /// Common files that most objects / scenes contain.
@@ -294,9 +318,10 @@ impl Mapper {
                     // If the match contains quoted content, extract the part between the first and last quote
                     if raw.contains('"') {
                         if let (Some(s), Some(e)) = (raw.find('"'), raw.rfind('"'))
-                            && e > s {
-                                raw = raw[s + 1..e].to_string();
-                            }
+                            && e > s
+                        {
+                            raw = raw[s + 1..e].to_string();
+                        }
                     } else {
                         // Remove common leading tokens like `source=` or `file=` and trim
                         raw = raw

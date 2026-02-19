@@ -21,7 +21,6 @@ impl AfsHash {
     pub fn new_from_path(path: &Path) -> Self {
         let s = path.to_str().unwrap_or_default();
 
-        // Otherwise, compute the hash from the path string
         Self(afs_hash(s.chars()))
     }
 }

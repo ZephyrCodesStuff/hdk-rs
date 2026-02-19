@@ -19,11 +19,13 @@ impl AfsHash {
         // 
         // WARN: This might shadow actual file names that just so happen to be valid hashes
         if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-            if file_name.len() == 8 && file_name.chars().all(|c| c.is_ascii_hexdigit() && c.is_uppercase()) {
-
-                // If it is, parse it directly as a hash
-                if let Ok(hash) = i32::from_str_radix(file_name, 16) {
-                    return Self(hash);
+            if file_name.len() == 8 {
+                // Check if the file name is a valid uppercase hex hash
+                if let Ok(decoded) = hex::decode(file_name) {
+                    if decoded.len() == 4 {
+                        let hash = i32::from_be_bytes(decoded.try_into().unwrap());
+                        return Self(hash);
+                    }
                 }
             }
         }

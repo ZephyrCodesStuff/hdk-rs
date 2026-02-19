@@ -23,19 +23,18 @@ impl AfsHash {
     /// Otherwise, the hash will be computed from the full path string.
     pub fn new_from_path(path: &Path) -> Self {
         let s = path.to_str().unwrap_or_default();
-        
+
         // Check if file name is already a hash in uppercase hex
-        // 
+        //
         // WARN: This might shadow actual file names that just so happen to be valid hashes
-        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-            if file_name.len() == 8 {
-                // Check if the file name is a valid uppercase hex hash
-                if let Ok(decoded) = hex::decode(file_name) {
-                    if decoded.len() == 4 {
-                        let hash = i32::from_be_bytes(decoded.try_into().unwrap());
-                        return Self(hash);
-                    }
-                }
+        if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
+            && file_name.len() == 8
+            && let Ok(decoded) = hex::decode(file_name)
+        {
+            // Check if the file name is a valid uppercase hex hash
+            if decoded.len() == 4 {
+                let hash = i32::from_be_bytes(decoded.try_into().unwrap());
+                return Self(hash);
             }
         }
 

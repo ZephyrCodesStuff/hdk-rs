@@ -3,7 +3,6 @@ use binrw::prelude::*;
 use hdk_secure::hash::AfsHash;
 
 #[derive(BinRead, Debug, Clone)]
-#[br(little)]
 pub struct BarHeader {
     #[br(map = |x: u32| ((x >> 16) as u16, (x & 0xFFFF) as u16))]
     pub version_and_flags: (u16, u16),
@@ -14,7 +13,6 @@ pub struct BarHeader {
 }
 
 #[derive(BinRead, Debug, Clone)]
-#[br(little)]
 pub struct BarEntry {
     pub name_hash: i32,
     #[br(map = |x: u32| (x & 0xFFFFFFFC, (x & 0x3) as u8))]

@@ -1,6 +1,9 @@
 use super::structs::{BarEntry, BarEntryMetadata, BarHeader};
-use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType};
-use binrw::BinReaderExt;
+
+use crate::archive::ArchiveReader;
+use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType, Endianness};
+
+use binrw::{BinReaderExt, Endian};
 use ctr::Ctr64BE;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use enumflags2::BitFlags;
@@ -8,32 +11,73 @@ use hdk_comp::zlib::reader::SegmentedZlibReader;
 use hdk_secure::blowfish::Blowfish;
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 
-use crate::archive::ArchiveReader;
-use crate::crypto::{DEFAULT_KEY, SIGNATURE_KEY};
-
 pub struct BarReader<R: Read + Seek> {
     inner: R,
     header: BarHeader,
     entries: Vec<BarEntry>,
     toc_base: u64,
     flags: BitFlags<ArchiveFlags>,
+
+    /// The detected endianness of the archive.
+    pub endianness: Endianness,
+
+    /// The default Blowfish key used for decrypting encrypted file bodies.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    default_key: [u8; 32],
+
+    /// The signature Blowfish key used for decrypting encrypted file headers.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    signature_key: [u8; 32],
 }
 
 impl<R: Read + Seek> BarReader<R> {
-    pub fn open(mut reader: R) -> io::Result<Self> {
-        let magic_val = reader
-            .read_le::<u32>()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        if magic_val != ARCHIVE_MAGIC {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Invalid BAR magic",
-            ));
+    /// Open a BAR archive for reading.
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - The underlying reader to read the archive from.
+    /// * `default_key` - The Blowfish key used for decrypting encrypted file bodies.
+    /// * `signature_key` - The Blowfish key used for decrypting encrypted file headers.
+    /// * `endianness` - Optional endianness (defaults to Little if None).
+    pub fn open(
+        mut reader: R,
+        default_key: [u8; 32],
+        signature_key: [u8; 32],
+        endianness: Option<Endianness>,
+    ) -> io::Result<Self> {
+        // Determine endianness by checking which interpretation yields the archive magic.
+        // Prefer the provided endianness (defaults to Little), but try the opposite before failing.
+        let preferred = endianness.unwrap_or(Endianness::Little);
+        let opposite = match preferred {
+            Endianness::Little => Endianness::Big,
+            Endianness::Big => Endianness::Little,
+        };
+
+        let start_pos = reader.stream_position()?;
+        let mut detected: Option<Endianness> = None;
+
+        for &candidate in &[preferred, opposite] {
+            reader.seek(SeekFrom::Start(start_pos))?;
+            let endian_candidate: Endian = candidate.into();
+            let magic_val = reader
+                .read_type::<u32>(endian_candidate)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+            if magic_val == ARCHIVE_MAGIC {
+                detected = Some(candidate);
+                break;
+            }
         }
+
+        let endianness = detected
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid BAR magic"))?;
+        let endian: Endian = endianness.into();
 
         // Read fixed header part
         let header: BarHeader = reader
-            .read_le()
+            .read_type(endian)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         // Convert tuple to actual types
@@ -56,36 +100,37 @@ impl<R: Read + Seek> BarReader<R> {
         let entries_size = (entries_count as u64) * 16;
 
         // Handle ZTOC
-        let mut toc_data;
-        let toc_base;
-
-        if flags.contains(ArchiveFlags::ZTOC) {
+        let (toc_data, toc_base) = if flags.contains(ArchiveFlags::ZTOC) {
             let compressed_size = reader
-                .read_le::<u32>()
+                .read_type::<u32>(endian)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             let mut compressed_data = vec![0u8; compressed_size as usize];
             reader.read_exact(&mut compressed_data)?;
 
             // Decompress ZTOC
             let mut d = flate2::Decompress::new(false);
-            let mut out = Vec::with_capacity(entries_size as usize);
-            d.decompress_vec(&compressed_data, &mut out, flate2::FlushDecompress::Finish)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            toc_data = out;
+            let mut toc_data = Vec::with_capacity(entries_size as usize);
+            d.decompress_vec(
+                &compressed_data,
+                &mut toc_data,
+                flate2::FlushDecompress::Finish,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-            toc_base = 24 + u64::from(compressed_size);
+            (toc_data, 24 + u64::from(compressed_size))
         } else {
-            toc_data = vec![0u8; entries_size as usize];
+            let mut toc_data = vec![0u8; entries_size as usize];
             reader.read_exact(&mut toc_data)?;
-            toc_base = 20 + entries_size;
-        }
+
+            (toc_data, 20 + entries_size)
+        };
 
         let mut cursor = Cursor::new(toc_data);
         let mut entries = Vec::with_capacity(entries_count);
 
         for _ in 0..entries_count {
             let mut entry: BarEntry = cursor
-                .read_le()
+                .read_type(endian)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
             // Fixup compression type bug (0 vs 1)
@@ -106,7 +151,14 @@ impl<R: Read + Seek> BarReader<R> {
             entries,
             toc_base,
             flags,
+            endianness,
+            default_key,
+            signature_key,
         })
+    }
+
+    pub fn header(&self) -> BarHeader {
+        self.header.clone()
     }
 }
 
@@ -143,7 +195,7 @@ impl<R: Read + Seek> ArchiveReader for BarReader<R> {
 
         match comp_type {
             CompressionType::Encrypted => {
-                let iv = crate::crypto::forge_iv(
+                let iv = super::forge_iv(
                     u64::from(self.header.file_count),
                     u64::from(entry.uncompressed_size),
                     u64::from(entry.compressed_size),
@@ -163,7 +215,7 @@ impl<R: Read + Seek> ArchiveReader for BarReader<R> {
                 let mut body_wrapper = body_wrapper.to_vec();
 
                 type BlowfishCtr = Ctr64BE<Blowfish>;
-                let mut bf = BlowfishCtr::new(&SIGNATURE_KEY.into(), &iv.into());
+                let mut bf = BlowfishCtr::new(&self.signature_key.into(), &iv.into());
                 bf.apply_keystream(&mut head);
 
                 let mut iv_val = u64::from_be_bytes(iv);
@@ -175,7 +227,7 @@ impl<R: Read + Seek> ArchiveReader for BarReader<R> {
                 }
 
                 let (_fourcc, actual_body) = body_wrapper.split_at_mut(4);
-                let mut bf_body = BlowfishCtr::new(&DEFAULT_KEY.into(), &iv_body.into());
+                let mut bf_body = BlowfishCtr::new(&self.default_key.into(), &iv_body.into());
                 bf_body.apply_keystream(actual_body);
 
                 let seg = SegmentedZlibReader::new(Cursor::new(actual_body.to_vec()));

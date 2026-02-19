@@ -1,9 +1,11 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use crate::block::{BlockMetadata, DataBlockProcessor, METADATA_OFFSET};
-use crate::crypto::{EDAT_COMPRESSED_FLAG, EDAT_FLAG_0X20};
+use crate::crypto::SdatKeys;
 use crate::error::SdatError;
+use crate::headers::EdatFlag;
 use crate::headers::{EdatHeader, NpdHeader};
+use crate::options::DecryptBlockOptions;
 
 /// High-level, streaming(ish) SDAT reader.
 pub struct SdatReader<R: Read + Seek> {
@@ -18,7 +20,12 @@ pub struct SdatReader<R: Read + Seek> {
 
 impl<R: Read + Seek> SdatReader<R> {
     /// Open an SDAT file from a seekable reader.
-    pub fn open(mut inner: R) -> Result<Self, SdatError> {
+    ///
+    /// # Arguments
+    ///
+    /// * `inner` - The seekable reader containing the SDAT file.
+    /// * `keys` - The cryptographic keys required for decryption.
+    pub fn open(mut inner: R, keys: &SdatKeys) -> Result<Self, SdatError> {
         inner
             .seek(SeekFrom::Start(0))
             .map_err(|e| SdatError::InvalidHeader(format!("Failed to seek: {e}")))?;
@@ -41,14 +48,14 @@ impl<R: Read + Seek> SdatReader<R> {
             return Err(SdatError::InvalidFormat);
         }
 
-        let crypt_key = crate::crypto::generate_sdat_key(&npd_header.dev_hash);
+        let crypt_key = crate::crypto::generate_sdat_key(&keys.sdat_key, &npd_header.dev_hash);
 
         let block_num = edat_header
             .file_size
             .div_ceil(u64::from(edat_header.block_size)) as usize;
 
-        let metadata_section_size = if (edat_header.flags & EDAT_COMPRESSED_FLAG) != 0
-            || (edat_header.flags & EDAT_FLAG_0X20) != 0
+        let metadata_section_size = if edat_header.flags_bits().contains(EdatFlag::Compressed)
+            || edat_header.flags_bits().contains(EdatFlag::Flag0x20)
         {
             0x20
         } else {
@@ -60,7 +67,7 @@ impl<R: Read + Seek> SdatReader<R> {
             npd_header,
             edat_header,
             crypt_key,
-            block_processor: DataBlockProcessor::new(),
+            block_processor: DataBlockProcessor::new(*keys),
             block_num,
             metadata_section_size,
         })
@@ -104,7 +111,7 @@ impl<R: Read + Seek> SdatReader<R> {
 
         let metadata_offset = METADATA_OFFSET as u64;
 
-        if (self.edat_header.flags & EDAT_COMPRESSED_FLAG) != 0 {
+        if self.edat_header.flags_bits().contains(EdatFlag::Compressed) {
             // 0x20 bytes per block
             let entry_off =
                 metadata_offset + (block_index as u64) * (self.metadata_section_size as u64);
@@ -136,7 +143,7 @@ impl<R: Read + Seek> SdatReader<R> {
                 length,
                 compression_end,
             })
-        } else if (self.edat_header.flags & EDAT_FLAG_0X20) != 0 {
+        } else if self.edat_header.flags_bits().contains(EdatFlag::Flag0x20) {
             // FLAG 0x20: metadata is interleaved before each block.
             let block_size = u64::from(self.edat_header.block_size);
             let stride = 0x20u64 + block_size;
@@ -151,17 +158,16 @@ impl<R: Read + Seek> SdatReader<R> {
             }
 
             let offset = metadata_offset + block_base + 0x20;
-
-            let mut length = self.edat_header.block_size;
-            if block_index == (self.block_num - 1)
+            let length = if block_index == (self.block_num - 1)
                 && !self
                     .edat_header
                     .file_size
                     .is_multiple_of(u64::from(self.edat_header.block_size))
             {
-                length =
-                    (self.edat_header.file_size % u64::from(self.edat_header.block_size)) as u32;
-            }
+                (self.edat_header.file_size % u64::from(self.edat_header.block_size)) as u32
+            } else {
+                self.edat_header.block_size
+            };
 
             Ok(BlockMetadata {
                 hash,
@@ -180,16 +186,16 @@ impl<R: Read + Seek> SdatReader<R> {
                 + (block_index as u64) * u64::from(self.edat_header.block_size)
                 + (self.block_num as u64) * (self.metadata_section_size as u64);
 
-            let mut length = self.edat_header.block_size;
-            if block_index == (self.block_num - 1)
+            let length = if block_index == (self.block_num - 1)
                 && !self
                     .edat_header
                     .file_size
                     .is_multiple_of(u64::from(self.edat_header.block_size))
             {
-                length =
-                    (self.edat_header.file_size % u64::from(self.edat_header.block_size)) as u32;
-            }
+                (self.edat_header.file_size % u64::from(self.edat_header.block_size)) as u32
+            } else {
+                self.edat_header.block_size
+            };
 
             Ok(BlockMetadata {
                 hash,
@@ -222,14 +228,18 @@ impl<R: Read + Seek> SdatReader<R> {
 
             let dec = self.block_processor.decrypt_data_block(
                 &enc,
-                &meta,
-                block_index as u32,
-                &self.edat_header,
-                &self.npd_header,
-                &self.crypt_key,
+                DecryptBlockOptions {
+                    block_metadata: meta.clone(),
+                    block_index: block_index as u32,
+                    edat_header: self.edat_header.clone(),
+                    npd_header: self.npd_header.clone(),
+                    crypt_key: self.crypt_key,
+                },
             )?;
 
-            if (self.edat_header.flags & EDAT_COMPRESSED_FLAG) != 0 && meta.compression_end != 0 {
+            if self.edat_header.flags_bits().contains(EdatFlag::Compressed)
+                && meta.compression_end != 0
+            {
                 // Current implementation treats compressed SDAT as one block containing the full payload.
                 let mut decompressed = vec![0u8; self.edat_header.file_size as usize];
                 let n = crate::compression::decompress(&dec, &mut decompressed)?;

@@ -6,7 +6,7 @@
 //!
 //! This is only enabled when the `export` feature is activated.
 
-use crate::{Element, Material, Model, Texture, VertexStream, VertexType};
+use crate::{Element, Material, Model, Texture, VertexStream};
 use serde::Serialize;
 
 /// Export-friendly model representation used for JSON output.

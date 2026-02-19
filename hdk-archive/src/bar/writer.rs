@@ -3,7 +3,6 @@ use enumflags2::BitFlags;
 use flate2::{Compression, write::ZlibEncoder};
 use std::io::{self, Cursor, Read, Write};
 
-use crate::crypto::{DEFAULT_KEY, SIGNATURE_KEY};
 use ctr::Ctr64BE;
 use ctr::cipher::KeyIvInit;
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
@@ -22,10 +21,26 @@ pub struct BarWriter<W: Write> {
     /// Default is no flags.
     flags: BitFlags<ArchiveFlags>,
 
+    /// The timestamp of the archive.
+    ///
+    /// This is often random bytes in original Home archives,
+    /// but `hdk-rs` uses the device's local time by default.
+    timestamp: i32,
+
     /// The list of entries to write.
     ///
     /// Each entry holds its data in-memory until `finish()` is called.
     entries: Vec<BarEntryToWrite>,
+
+    /// The default Blowfish key used for encrypting file bodies.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    default_key: [u8; 32],
+
+    /// The signature Blowfish key used for encrypting file headers.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    signature_key: [u8; 32],
 }
 
 struct BarEntryToWrite {
@@ -42,17 +57,63 @@ struct BarEntryToWrite {
     sha1: Option<[u8; 20]>,
 }
 
+impl Default for BarWriter<std::io::Cursor<Vec<u8>>> {
+    fn default() -> Self {
+        Self::new(std::io::Cursor::new(Vec::new()), [0u8; 32], [0u8; 32]).unwrap()
+    }
+}
+
+// TODO: make endianness configurable
 impl<W: Write> BarWriter<W> {
-    pub fn new(inner: W) -> Self {
-        Self {
+    /// Create a new BAR archive writer.
+    ///
+    /// # Arguments
+    ///
+    /// * `inner` - The underlying writer to write the archive to.
+    /// * `default_key` - The Blowfish key used for encrypting file bodies.
+    /// * `signature_key` - The Blowfish key used for encrypting file headers.
+    pub fn new(inner: W, default_key: [u8; 32], signature_key: [u8; 32]) -> io::Result<Self> {
+        // Use current system time as timestamp
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| io::Error::other(format!("system time error: {e}")))?
+            .as_secs() as i32;
+
+        Ok(Self {
             inner,
+            timestamp,
             flags: BitFlags::empty(), // Default no flags
             entries: Vec::new(),
-        }
+            default_key,
+            signature_key,
+        })
     }
 
+    /// Set the default Blowfish key used for encrypting file bodies.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    pub const fn with_default_key(mut self, default_key: [u8; 32]) -> Self {
+        self.default_key = default_key;
+        self
+    }
+
+    /// Set the signature Blowfish key used for encrypting file headers.
+    ///
+    /// This is used in CTR mode with an IV derived from the entry metadata.
+    pub const fn with_signature_key(mut self, signature_key: [u8; 32]) -> Self {
+        self.signature_key = signature_key;
+        self
+    }
+
+    /// Set the archive flags to write in the header.
     pub const fn with_flags(mut self, flags: BitFlags<ArchiveFlags>) -> Self {
         self.flags = flags;
+        self
+    }
+
+    /// Set the timestamp of the archive.
+    pub const fn with_timestamp(mut self, timestamp: i32) -> Self {
+        self.timestamp = timestamp;
         self
     }
 
@@ -161,8 +222,7 @@ impl<W: Write> BarWriter<W> {
         // Priority (0 default)
         self.inner.write_i32::<LittleEndian>(0)?;
         // Timestamp (0 default)
-        // TODO: support custom timestamp
-        self.inner.write_i32::<LittleEndian>(0)?;
+        self.inner.write_i32::<LittleEndian>(self.timestamp)?;
         // File Count
         self.inner.write_u32::<LittleEndian>(file_count)?;
 
@@ -187,12 +247,12 @@ impl<W: Write> BarWriter<W> {
                 && let Some(checksum) = entry.sha1
             {
                 // Forge IV
-                let iv = crate::crypto::forge_iv(
+                let iv = super::forge_iv(
                     u64::from(file_count),
                     u64::from(entry.uncompressed_size),
                     u64::from(entry.compressed_size),
                     u64::from(entry.offset),
-                    0, // timestamp currently 0
+                    self.timestamp,
                 );
 
                 // Build head: 4B fourcc (zeros) + 20B checksum
@@ -200,22 +260,22 @@ impl<W: Write> BarWriter<W> {
                 head.extend_from_slice(&[0u8; 4]);
                 head.extend_from_slice(&checksum);
 
-                // Encrypt head with SIGNATURE_KEY using CryptoWriter
+                // Encrypt head with signature_key using CryptoWriter
                 let mut cw_head = CryptoWriter::new(
                     Vec::new(),
-                    Ctr64BE::<Blowfish>::new(&SIGNATURE_KEY.into(), &iv.into()),
+                    Ctr64BE::<Blowfish>::new(&self.signature_key.into(), &iv.into()),
                 );
                 cw_head.write_all(&head)?;
                 let head_enc = cw_head.into_inner();
 
-                // Encrypt body with DEFAULT_KEY using IV + 3 via CryptoWriter
+                // Encrypt body with default_key using IV + 3 via CryptoWriter
                 let mut iv_as_u64 = u64::from_be_bytes(iv);
                 iv_as_u64 = iv_as_u64.wrapping_add(3);
                 let iv_body = iv_as_u64.to_be_bytes();
 
                 let mut cw_body = CryptoWriter::new(
                     Vec::new(),
-                    Ctr64BE::<Blowfish>::new(&DEFAULT_KEY.into(), &iv_body.into()),
+                    Ctr64BE::<Blowfish>::new(&self.default_key.into(), &iv_body.into()),
                 );
                 cw_body.write_all(&entry.data)?;
                 let body_enc = cw_body.into_inner();

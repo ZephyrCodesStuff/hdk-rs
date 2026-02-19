@@ -19,7 +19,7 @@ impl<R: Read + Seek> SegmentedLzmaReader<R> {
         // Validate Magic
         let mut magic = [0u8; 4];
         inner.read_exact(&mut magic)?;
-        if magic != super::MAGIC {
+        if magic != super::SEGMENT_MAGIC {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid magic"));
         }
 

@@ -10,7 +10,7 @@ use std::io::{self, Read, Write};
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
 use hdk_secure::{hash::AfsHash, xtea::modes::XteaPS3};
 
-use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, CompressionType, Endianness};
+use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType, Endianness};
 
 /// Helper small struct to hold a queued entry for writing
 struct EntryToWrite {
@@ -37,9 +37,6 @@ pub struct SharcWriter<W: Write> {
     ///
     /// The canonical default for SHARC is big-endian.
     endianness: Endianness,
-
-    /// This should always be `512` for SHARC archives.
-    pub version: u16,
 
     /// This holds Home archives bitflags.
     pub flags: BitFlags<ArchiveFlags>,
@@ -72,7 +69,7 @@ pub struct SharcWriter<W: Write> {
 
 impl Default for SharcWriter<std::io::Cursor<Vec<u8>>> {
     fn default() -> Self {
-        SharcWriter::new(std::io::Cursor::new(Vec::new()), [0u8; 32], Endianness::Big).unwrap()
+        Self::new(std::io::Cursor::new(Vec::new()), [0u8; 32], Endianness::Big).unwrap()
     }
 }
 
@@ -84,7 +81,7 @@ impl<W: Write> SharcWriter<W> {
     /// - The CDN / content key, used for any SHARC embedded in CDN-downloaded SDAT files.
     ///
     /// Setting a wrong key will render the game unable to read the archive.
-    pub fn with_key(mut self, key: [u8; 32]) -> Self {
+    pub const fn with_key(mut self, key: [u8; 32]) -> Self {
         self.key = key;
         self
     }
@@ -92,8 +89,23 @@ impl<W: Write> SharcWriter<W> {
     /// Set the endianness of the archive.
     ///
     /// Canonical SHARC archives are big-endian, but Home archives can be either.
-    pub fn with_endianess(mut self, endianness: Endianness) -> Self {
+    pub const fn with_endianess(mut self, endianness: Endianness) -> Self {
         self.endianness = endianness;
+        self
+    }
+
+    /// Set the timestamp of the archive.
+    ///
+    /// This is often random bytes in original Home archives,
+    /// but `hdk-rs` uses the device's local time by default.
+    pub const fn with_timestamp(mut self, timestamp: i32) -> Self {
+        self.timestamp = timestamp;
+        self
+    }
+
+    /// Sets the flags of the archive.
+    pub const fn with_flags(mut self, flags: BitFlags<ArchiveFlags>) -> Self {
+        self.flags = flags;
         self
     }
 
@@ -105,15 +117,20 @@ impl<W: Write> SharcWriter<W> {
         let mut files_key = [0u8; 16];
         rng.fill_bytes(&mut files_key);
 
+        // Use current system time as timestamp
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| io::Error::other(format!("system time error: {e}")))?
+            .as_secs() as i32;
+
         Ok(Self {
             inner,
             key,
             endianness,
-            version: 1,
             flags: ArchiveFlags::empty(),
             iv,
             priority: 0,
-            timestamp: 0,
+            timestamp,
             files_key,
             entries: Vec::new(),
         })
@@ -219,17 +236,16 @@ impl<W: Write> SharcWriter<W> {
         }
 
         // 1) Write Preamble (plain)
+        let version = ArchiveVersion::SHARC as u16;
         match self.endianness {
             Endianness::Little => {
                 self.inner.write_u32::<LittleEndian>(ARCHIVE_MAGIC)?;
-                let flags_and_version =
-                    (u32::from(self.version) << 16) | u32::from(self.flags.bits());
+                let flags_and_version = (u32::from(version) << 16) | u32::from(self.flags.bits());
                 self.inner.write_u32::<LittleEndian>(flags_and_version)?;
             }
             Endianness::Big => {
                 self.inner.write_u32::<BigEndian>(ARCHIVE_MAGIC)?;
-                let flags_and_version =
-                    (u32::from(self.version) << 16) | u32::from(self.flags.bits());
+                let flags_and_version = (u32::from(version) << 16) | u32::from(self.flags.bits());
                 self.inner.write_u32::<BigEndian>(flags_and_version)?;
             }
         }

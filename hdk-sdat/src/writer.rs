@@ -1,8 +1,10 @@
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use crate::block::{DataBlockProcessor, METADATA_OFFSET};
+use crate::crypto::SdatKeys;
 use crate::error::SdatError;
 use crate::headers::{EdatHeader, NpdHeader};
+use crate::options::EncryptBlockOptions;
 
 /// High-level SDAT writer.
 ///
@@ -11,15 +13,21 @@ use crate::headers::{EdatHeader, NpdHeader};
 #[derive(Debug, Clone)]
 pub struct SdatWriter {
     output_file_name: String,
+    keys: SdatKeys,
 }
 
 impl SdatWriter {
     /// Create a new writer configuration.
     ///
+    /// # Arguments
+    ///
+    /// * `output_file_name` - The output filename to embed in the SDAT header.
+    /// * `keys` - The cryptographic keys required for encryption.
+    ///
     /// # Errors
     ///
     /// This function will return an error if the provided output filename is empty.
-    pub fn new(output_file_name: impl Into<String>) -> Result<Self, SdatError> {
+    pub fn new(output_file_name: impl Into<String>, keys: SdatKeys) -> Result<Self, SdatError> {
         let output_file_name = output_file_name.into();
         if output_file_name.is_empty() {
             return Err(SdatError::InvalidHeader(
@@ -27,7 +35,10 @@ impl SdatWriter {
             ));
         }
 
-        Ok(Self { output_file_name })
+        Ok(Self {
+            output_file_name,
+            keys,
+        })
     }
 
     /// Repack plaintext bytes into an SDAT container, returning the full SDAT file bytes.
@@ -40,7 +51,7 @@ impl SdatWriter {
         let mut in_cur = Cursor::new(input);
 
         // Delegate to the streaming writer, using an in-memory Cursor as the output sink.
-        let _ = SdatStreamWriter::new(&mut out, self.output_file_name.clone())?
+        let _ = SdatStreamWriter::new(&mut out, self.output_file_name.clone(), self.keys)?
             .write_from_reader_seekable(&mut in_cur)?;
 
         Ok(out.into_inner())
@@ -72,15 +83,26 @@ pub struct SdatStreamWriter<W: Write + Seek> {
     inner: W,
     output_file_name: String,
     block_size: u32,
+    keys: SdatKeys,
 }
 
 impl<W: Write + Seek> SdatStreamWriter<W> {
     /// Create a new streaming SDAT writer.
     ///
+    /// # Arguments
+    ///
+    /// * `inner` - The seekable writer to write the SDAT output to.
+    /// * `output_file_name` - The output filename to embed in the SDAT header.
+    /// * `keys` - The cryptographic keys required for encryption.
+    ///
     /// # Errors
     ///
     /// This function will return an error if the provided output filename is empty.
-    pub fn new(inner: W, output_file_name: impl Into<String>) -> Result<Self, SdatError> {
+    pub fn new(
+        inner: W,
+        output_file_name: impl Into<String>,
+        keys: SdatKeys,
+    ) -> Result<Self, SdatError> {
         let output_file_name = output_file_name.into();
         if output_file_name.is_empty() {
             return Err(SdatError::InvalidHeader(
@@ -92,6 +114,7 @@ impl<W: Write + Seek> SdatStreamWriter<W> {
             inner,
             output_file_name,
             block_size: 0x8000,
+            keys,
         })
     }
 
@@ -131,17 +154,17 @@ impl<W: Write + Seek> SdatStreamWriter<W> {
         let copy_len = content_bytes.len().min(0x30);
         content_id[..copy_len].copy_from_slice(&content_bytes[..copy_len]);
 
-        let crypto_ctx = crate::crypto::CryptoContext::new();
+        let crypto_ctx = crate::crypto::CryptoContext::new(self.keys);
 
         let mut title_msg = Vec::with_capacity(0x30 + self.output_file_name.len());
         title_msg.extend_from_slice(&content_id);
         title_msg.extend_from_slice(self.output_file_name.as_bytes());
-        let title_hash = crypto_ctx.aes_cmac(&crate::crypto::NPDRM_OMAC_KEY_3, &title_msg);
+        let title_hash = crypto_ctx.aes_cmac(&self.keys.npdrm_omac_key_3, &title_msg);
 
         let mut npd_header = NpdHeader::new_sdat(content_id, [0u8; 16], title_hash);
         let mut npd_bytes = vec![0u8; NpdHeader::SIZE];
         npd_header.serialize(&mut npd_bytes)?;
-        let dev_hash = crypto_ctx.aes_cmac(&crate::crypto::NPDRM_OMAC_KEY_2, &npd_bytes[0..0x60]);
+        let dev_hash = crypto_ctx.aes_cmac(&self.keys.npdrm_omac_key_2, &npd_bytes[0..0x60]);
         npd_header.dev_hash = dev_hash;
         npd_header.serialize(&mut npd_bytes)?;
 
@@ -149,7 +172,7 @@ impl<W: Write + Seek> SdatStreamWriter<W> {
         let mut edat_bytes = vec![0u8; EdatHeader::SIZE];
         edat_header.serialize(&mut edat_bytes)?;
 
-        let crypt_key = crate::crypto::generate_sdat_key(&npd_header.dev_hash);
+        let crypt_key = crate::crypto::generate_sdat_key(&self.keys.sdat_key, &npd_header.dev_hash);
 
         // 2) Layout sizing
         let block_num = file_size.div_ceil(u64::from(self.block_size)) as usize;
@@ -198,7 +221,7 @@ impl<W: Write + Seek> SdatStreamWriter<W> {
             .seek(SeekFrom::Start(data_start))
             .map_err(|e| SdatError::InvalidHeader(format!("Failed to seek to data start: {e}")))?;
 
-        let block_processor = DataBlockProcessor::new();
+        let block_processor = DataBlockProcessor::new(self.keys);
         let mut metadata_buf = vec![0u8; metadata_size];
         let mut data_pos = data_start;
 
@@ -214,10 +237,12 @@ impl<W: Write + Seek> SdatStreamWriter<W> {
 
             let (encrypted, hash) = block_processor.encrypt_data_block(
                 &plain,
-                block_index as u32,
-                &edat_header,
-                &npd_header,
-                &crypt_key,
+                EncryptBlockOptions {
+                    block_index: block_index as u32,
+                    edat_header: edat_header.clone(),
+                    npd_header: npd_header.clone(),
+                    crypt_key,
+                },
             )?;
 
             // Fill metadata entry (hash only for non-compressed format).

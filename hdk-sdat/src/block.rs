@@ -1,13 +1,12 @@
 use crate::CryptoContext;
 use crate::CryptoError;
 use crate::MemoryError;
-use crate::crypto::EDAT_IV;
 use crate::crypto::{
     EDAT_COMPRESSED_FLAG, EDAT_DEBUG_DATA_FLAG, EDAT_ENCRYPTED_KEY_FLAG, EDAT_FLAG_0X02,
-    EDAT_FLAG_0X10, EDAT_FLAG_0X20,
+    EDAT_FLAG_0X10, EDAT_FLAG_0X20, EDAT_IV, SdatKeys,
 };
 use crate::error::SdatError;
-use crate::headers::{EdatHeader, NpdHeader};
+use crate::options::{DecryptBlockOptions, EncryptBlockOptions, ParseBlockMetadataOptions};
 
 /// Offset to the metadata
 pub const METADATA_OFFSET: usize = 0x100;
@@ -31,11 +30,11 @@ pub struct DataBlockProcessor {
 }
 
 impl DataBlockProcessor {
-    /// Create a new data block processor
+    /// Create a new data block processor with the given keys.
     #[must_use]
-    pub const fn new() -> Self {
+    pub const fn new(keys: SdatKeys) -> Self {
         Self {
-            crypto_ctx: CryptoContext::new(),
+            crypto_ctx: CryptoContext::new(keys),
         }
     }
 
@@ -43,31 +42,22 @@ impl DataBlockProcessor {
     ///
     /// This function implements the `dec_section` logic from the C code
     #[must_use]
-    pub const fn decrypt_metadata_section(&self, metadata: &[u8; 32]) -> [u8; 16] {
+    pub fn decrypt_metadata_section(&self, metadata: &[u8; 32]) -> [u8; 16] {
         let mut dec = [0u8; 16];
 
-        // XOR operations as per the C implementation
-        dec[0x00] = metadata[0x0C] ^ metadata[0x08] ^ metadata[0x10];
-        dec[0x01] = metadata[0x0D] ^ metadata[0x09] ^ metadata[0x11];
-        dec[0x02] = metadata[0x0E] ^ metadata[0x0A] ^ metadata[0x12];
-        dec[0x03] = metadata[0x0F] ^ metadata[0x0B] ^ metadata[0x13];
-        dec[0x04] = metadata[0x04] ^ metadata[0x08] ^ metadata[0x14];
-        dec[0x05] = metadata[0x05] ^ metadata[0x09] ^ metadata[0x15];
-        dec[0x06] = metadata[0x06] ^ metadata[0x0A] ^ metadata[0x16];
-        dec[0x07] = metadata[0x07] ^ metadata[0x0B] ^ metadata[0x17];
-        dec[0x08] = metadata[0x0C] ^ metadata[0x00] ^ metadata[0x18];
-        dec[0x09] = metadata[0x0D] ^ metadata[0x01] ^ metadata[0x19];
-        dec[0x0A] = metadata[0x0E] ^ metadata[0x02] ^ metadata[0x1A];
-        dec[0x0B] = metadata[0x0F] ^ metadata[0x03] ^ metadata[0x1B];
-        dec[0x0C] = metadata[0x04] ^ metadata[0x00] ^ metadata[0x1C];
-        dec[0x0D] = metadata[0x05] ^ metadata[0x01] ^ metadata[0x1D];
-        dec[0x0E] = metadata[0x06] ^ metadata[0x02] ^ metadata[0x1E];
-        dec[0x0F] = metadata[0x07] ^ metadata[0x03] ^ metadata[0x1F];
+        for i in 0..16 {
+            dec[i] = metadata[0x0C + (i % 4)] ^ metadata[0x08 + (i % 4)] ^ metadata[0x10 + (i % 4)];
+        }
 
         dec
     }
 
     /// Parse block metadata from the metadata section
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata_buffer` - The raw metadata bytes to parse
+    /// * `options` - Configuration for parsing (block index, headers, etc.)
     ///
     /// # Errors
     ///
@@ -76,12 +66,15 @@ impl DataBlockProcessor {
     pub fn parse_block_metadata(
         &self,
         metadata_buffer: &[u8],
-        block_index: usize,
-        edat_header: &EdatHeader,
-        npd_header: &NpdHeader,
-        metadata_offset: u64,
-        block_num: usize,
+        options: ParseBlockMetadataOptions,
     ) -> Result<BlockMetadata, SdatError> {
+        let ParseBlockMetadataOptions {
+            block_index,
+            edat_header,
+            npd_header,
+            metadata_offset,
+            block_num,
+        } = options;
         let metadata_section_size = if (edat_header.flags & EDAT_COMPRESSED_FLAG) != 0
             || (edat_header.flags & EDAT_FLAG_0X20) != 0
         {
@@ -187,16 +180,15 @@ impl DataBlockProcessor {
 
             // The data offset is right after the metadata
             let offset = metadata_offset + block_metadata_offset + 0x20;
-            let mut length = edat_header.block_size;
-
-            // Adjust length for last block
-            if block_index == (block_num - 1)
+            let length = if block_index == (block_num - 1)
                 && !edat_header
                     .file_size
                     .is_multiple_of(u64::from(edat_header.block_size))
             {
-                length = (edat_header.file_size % u64::from(edat_header.block_size)) as u32;
-            }
+                (edat_header.file_size % u64::from(edat_header.block_size)) as u32
+            } else {
+                edat_header.block_size
+            };
 
             Ok(BlockMetadata {
                 hash,
@@ -218,16 +210,16 @@ impl DataBlockProcessor {
             let offset = metadata_offset
                 + (block_index as u64) * u64::from(edat_header.block_size)
                 + (block_num as u64) * (metadata_section_size as u64);
-            let mut length = edat_header.block_size;
 
-            // Adjust length for last block
-            if block_index == (block_num - 1)
+            let length = if block_index == (block_num - 1)
                 && !edat_header
                     .file_size
                     .is_multiple_of(u64::from(edat_header.block_size))
             {
-                length = (edat_header.file_size % u64::from(edat_header.block_size)) as u32;
-            }
+                (edat_header.file_size % u64::from(edat_header.block_size)) as u32
+            } else {
+                edat_header.block_size
+            };
 
             Ok(BlockMetadata {
                 hash,
@@ -240,18 +232,26 @@ impl DataBlockProcessor {
 
     /// Decrypt a single data block
     ///
+    /// # Arguments
+    ///
+    /// * `encrypted_data` - The encrypted block data to decrypt
+    /// * `options` - Configuration for decryption (headers, key, block metadata, etc.)
+    ///
     /// # Errors
     ///
     /// This function will return an error if decryption fails.
     pub fn decrypt_data_block(
         &self,
         encrypted_data: &[u8],
-        block_metadata: &BlockMetadata,
-        block_index: u32,
-        edat_header: &EdatHeader,
-        npd_header: &NpdHeader,
-        crypt_key: &[u8; 16],
+        options: DecryptBlockOptions,
     ) -> Result<Vec<u8>, SdatError> {
+        let DecryptBlockOptions {
+            block_metadata,
+            block_index,
+            edat_header,
+            npd_header,
+            crypt_key,
+        } = options;
         // Pad length to 16-byte boundary
         let pad_length = block_metadata.length as usize;
         let length = (pad_length + 0xF) & 0xFFFFFFF0;
@@ -273,14 +273,14 @@ impl DataBlockProcessor {
         // Encrypt the block key with the crypto key to get the final key
         let mut key_result = [0u8; 16];
         self.crypto_ctx
-            .aes_ecb_encrypt(crypt_key, &block_key, &mut key_result)?;
+            .aes_ecb_encrypt(&crypt_key, &block_key, &mut key_result)?;
 
         // Generate hash key
         let hash_key = if (edat_header.flags & EDAT_FLAG_0X10) != 0 {
             // If FLAG 0x10 is set, encrypt again to get the final hash
             let mut hash = [0u8; 16];
             self.crypto_ctx
-                .aes_ecb_encrypt(crypt_key, &key_result, &mut hash)?;
+                .aes_ecb_encrypt(&crypt_key, &key_result, &mut hash)?;
             hash
         } else {
             key_result
@@ -328,15 +328,17 @@ impl DataBlockProcessor {
 
             // Temporarily disable hash verification to test decryption
             let hash_valid = self.decrypt_and_verify(
-                hash_mode,
-                crypto_mode,
-                u32::from(npd_header.version == 4),
                 &encrypted_data[..length],
                 &mut decrypted_data,
-                &key_result,
-                iv,
-                &hash_key,
-                &block_metadata.hash,
+                crate::options::CryptoOpOptions {
+                    hash_mode,
+                    crypto_mode,
+                    version: u32::from(npd_header.version == 4),
+                    key: key_result,
+                    iv: *iv,
+                    hash_key,
+                    expected_hash: block_metadata.hash,
+                },
             )?;
 
             if !hash_valid {
@@ -358,17 +360,25 @@ impl DataBlockProcessor {
 
     /// Encrypt a single data block
     ///
+    /// # Arguments
+    ///
+    /// * `plaintext_data` - The plaintext block data to encrypt
+    /// * `options` - Configuration for encryption (headers, key, block index, etc.)
+    ///
     /// # Errors
     ///
     /// This function will return an error if encryption fails.
     pub fn encrypt_data_block(
         &self,
         plaintext_data: &[u8],
-        block_index: u32,
-        edat_header: &EdatHeader,
-        npd_header: &NpdHeader,
-        crypt_key: &[u8; 16],
+        options: EncryptBlockOptions,
     ) -> Result<(Vec<u8>, Vec<u8>), SdatError> {
+        let EncryptBlockOptions {
+            block_index,
+            edat_header,
+            npd_header,
+            crypt_key,
+        } = options;
         // Pad length to 16-byte boundary
         let pad_length = plaintext_data.len();
         let length = (pad_length + 0xF) & 0xFFFFFFF0;
@@ -386,14 +396,14 @@ impl DataBlockProcessor {
         // Encrypt the block key with the crypto key to get the final key
         let mut key_result = [0u8; 16];
         self.crypto_ctx
-            .aes_ecb_encrypt(crypt_key, &block_key, &mut key_result)?;
+            .aes_ecb_encrypt(&crypt_key, &block_key, &mut key_result)?;
 
         // Generate hash key
         let hash_key = if (edat_header.flags & EDAT_FLAG_0X10) != 0 {
             // If FLAG 0x10 is set, encrypt again to get the final hash
             let mut hash = [0u8; 16];
             self.crypto_ctx
-                .aes_ecb_encrypt(crypt_key, &key_result, &mut hash)?;
+                .aes_ecb_encrypt(&crypt_key, &key_result, &mut hash)?;
             hash
         } else {
             key_result
@@ -450,14 +460,17 @@ impl DataBlockProcessor {
             };
 
             self.encrypt_and_hash(
-                hash_mode,
-                crypto_mode,
-                u32::from(npd_header.version == 4),
                 &padded_data,
                 &mut encrypted_data,
-                &key_result,
-                iv,
-                &hash_key,
+                crate::options::CryptoOpOptions {
+                    hash_mode,
+                    crypto_mode,
+                    version: u32::from(npd_header.version == 4),
+                    key: key_result,
+                    iv: *iv,
+                    hash_key,
+                    expected_hash: Vec::new(),
+                },
                 &mut hash,
             )?;
         }
@@ -468,25 +481,29 @@ impl DataBlockProcessor {
     /// Decrypt and verify a data block (internal helper)
     fn decrypt_and_verify(
         &self,
-        hash_mode: u32,
-        crypto_mode: u32,
-        version: u32,
         input: &[u8],
         output: &mut [u8],
-        key: &[u8; 16],
-        iv: &[u8; 16],
-        hash_key: &[u8; 16],
-        expected_hash: &[u8],
+        opts: crate::options::CryptoOpOptions,
     ) -> Result<bool, SdatError> {
+        let crate::options::CryptoOpOptions {
+            hash_mode,
+            crypto_mode,
+            version,
+            key,
+            iv,
+            hash_key,
+            expected_hash,
+        } = opts;
+
         // Generate final key and IV based on crypto mode
-        let (key_final, iv_final) = self
-            .crypto_ctx
-            .generate_key(crypto_mode, version, key, iv)?;
+        let (key_final, iv_final) =
+            self.crypto_ctx
+                .generate_key(crypto_mode, version, &key, &iv)?;
 
         // Generate final hash key based on hash mode
         let hash_final = self
             .crypto_ctx
-            .generate_hash(hash_mode, version, hash_key)?;
+            .generate_hash(hash_mode, version, &hash_key)?;
 
         // Perform decryption
         if (crypto_mode & 0xFF) == 0x01 {
@@ -527,25 +544,30 @@ impl DataBlockProcessor {
     /// Encrypt and hash a data block (internal helper)
     fn encrypt_and_hash(
         &self,
-        hash_mode: u32,
-        crypto_mode: u32,
-        version: u32,
         input: &[u8],
         output: &mut [u8],
-        key: &[u8; 16],
-        iv: &[u8; 16],
-        hash_key: &[u8; 16],
+        opts: crate::options::CryptoOpOptions,
         hash_output: &mut [u8],
     ) -> Result<(), SdatError> {
+        let crate::options::CryptoOpOptions {
+            hash_mode,
+            crypto_mode,
+            version,
+            key,
+            iv,
+            hash_key,
+            expected_hash: _,
+        } = opts;
+
         // Generate final key and IV based on crypto mode
-        let (key_final, iv_final) = self
-            .crypto_ctx
-            .generate_key(crypto_mode, version, key, iv)?;
+        let (key_final, iv_final) =
+            self.crypto_ctx
+                .generate_key(crypto_mode, version, &key, &iv)?;
 
         // Generate final hash key based on hash mode
         let hash_final = self
             .crypto_ctx
-            .generate_hash(hash_mode, version, hash_key)?;
+            .generate_hash(hash_mode, version, &hash_key)?;
 
         // Perform encryption
         if (crypto_mode & 0xFF) == 0x01 {
@@ -581,11 +603,5 @@ impl DataBlockProcessor {
         }
 
         Ok(())
-    }
-}
-
-impl Default for DataBlockProcessor {
-    fn default() -> Self {
-        Self::new()
     }
 }

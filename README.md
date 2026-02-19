@@ -7,9 +7,11 @@
   </p>
 
   <p>
-    <a href="https://github.com/ZephyrCodesStuff/hdk-rs/actions"><img src="https://img.shields.io/github/actions/workflow/status/ZephyrCodesStuff/hdk-rs/ci.yml?branch=main&style=flat-square" alt="Build Status"></a>
+    <a href="https://github.com/ZephyrCodesStuff/hdk-rs/actions"><img src="https://img.shields.io/github/actions/workflow/status/ZephyrCodesStuff/hdk-rs/clippy.yml?branch=main&style=flat-square" alt="Build Status"></a>
+    <!-- We are not currently on crates.io
     <a href="https://crates.io/crates/hdk-rs"><img src="https://img.shields.io/crates/v/hdk-rs?style=flat-square" alt="Crates.io version"></a>
     <a href="https://docs.rs/hdk-rs"><img src="https://img.shields.io/docsrs/hdk-rs?style=flat-square" alt="Docs.rs"></a>
+    -->
     <a href="#license"><img src="https://img.shields.io/badge/license-AGPLv3-blue?style=flat-square" alt="License"></a>
   </p>
 
@@ -42,9 +44,9 @@ Unlike legacy C tools, `hdk-rs` leverages Rust's type system and traits. Readers
 | Crate | Description |
 | :--- | :--- |
 | **[`hdk-secure`](./hdk-secure)** | Implementation of algorithms from Sony's `libsecure`. Supports **XTEA** and **Blowfish**. Fully compatible with the [RustCrypto](https://github.com/RustCrypto) ecosystem. |
-| **[`hdk-archive`](./hdk-archive)** | Reader/Writer support for **BAR** and **SHARC** PlayStation Home archives. Implements standard IO traits for maximum flexibility. |
+| **[`hdk-archive`](./hdk-archive)** | Reader/Writer support for **BAR** and **SHARC** PlayStation Home archives. Includes a full-fledged **Mapper** for recovering file paths. |
 | **[`hdk-sdat`](./hdk-sdat)** | Full support for the Sony **SDATA** format. Unpack, repack, and stream data efficiently. |
-| **[`hdk-firmware`](./hdk-firmware)** | Handle **PUP** containers and **SCE** file encryption/decryption (used in system updates like `PS3UPDAT.PUP`). |
+| **[`hdk-firmware`](./hdk-firmware)** | Handle **PUP** containers, **SCE** file encryption/decryption (used in system updates like `PS3UPDAT.PUP`) as well as **PKG** files for PS3/PSP. |
 | **[`hdk-comp`](./hdk-comp)** | Implementations of **EdgeLZMA** and **EdgeZlib**. Deeply integrated with IO traits to allow streaming composition with crypto modules. |
 | **[`hdk-mdl`](./hdk-mdl)** | Read PlayStation Home **MDL** (`HM`) model files. Supports export to JSON for easy inspection, via the `export` feature flag. |
 
@@ -66,6 +68,8 @@ Contributions are welcome! Since this project aims for stability and correctness
 2. Ensure no functionality is added without corresponding tests.
 3. Do not go out-of-scope. Your PR should only touch what is relevant to your addition.
 4. Make sure your PR contains all the details needed to know what you're changing and why.
+
+Note: although not strictly enforced, running `clippy::pedantic` every now and then is not a bad idea.
 
 ## 📄 License
 

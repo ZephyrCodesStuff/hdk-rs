@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 /// A relative pointer that reads a 32-bit offset from the current position,
 /// then seeks to (current_pos + offset) to read the target value.
-/// This matches the C# BinReader.ReadOffset() behavior.
 #[cfg_attr(feature = "export", derive(Serialize, Deserialize))]
 pub struct RelPtr<T>(pub Option<T>);
 
@@ -31,7 +30,7 @@ where
 
         // Offset of 0 typically means null/invalid
         if offset == 0 {
-            return Ok(RelPtr(None));
+            return Ok(Self(None));
         }
 
         // Calculate absolute target: ptr_pos + offset
@@ -41,7 +40,7 @@ where
         let file_len = reader.seek(SeekFrom::End(0))?;
         reader.seek(SeekFrom::Start(return_pos))?;
         if target >= file_len {
-            return Ok(RelPtr(None));
+            return Ok(Self(None));
         }
 
         // Jump, read, restore
@@ -49,10 +48,7 @@ where
         let value_res = T::read_options(reader, endian, args);
         reader.seek(SeekFrom::Start(return_pos))?;
 
-        match value_res {
-            Ok(value) => Ok(RelPtr(Some(value))),
-            Err(_) => Ok(RelPtr(None)),
-        }
+        value_res.map_or_else(|_| Ok(Self(None)), |value| Ok(Self(Some(value))))
     }
 }
 
@@ -77,22 +73,11 @@ impl BinRead for RelOffset {
     ) -> binrw::BinResult<Self> {
         let ptr_pos = reader.stream_position()?;
         let offset = <u32>::read_options(reader, endian, ())?;
-        Ok(RelOffset(ptr_pos + offset as u64))
+        Ok(Self(ptr_pos + offset as u64))
     }
 }
 
 /// The main model structure representing the MDL file.
-///
-/// Header layout (matching C# BinReader):
-/// - 0x00: tag (4 bytes - magic "HM" + version)
-/// - 0x04: skeletonKey
-/// - 0x08: jointCount  
-/// - 0x0C: elements count
-/// - 0x10: elements offset (relative pointer)
-/// - 0x14: materials count
-/// - 0x18: materials offset (relative pointer)
-/// - 0x1C: bounds offset (relative pointer) -> 4 floats
-/// - 0x20: (if version >= 1.2) lod count + offset
 #[cfg_attr(feature = "export", derive(Serialize, Deserialize))]
 #[derive(Debug)]
 pub struct Model {
@@ -109,33 +94,18 @@ impl BinRead for Model {
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
-        endian: binrw::Endian,
+        _endian: binrw::Endian,
         _: Self::Args<'_>,
     ) -> binrw::BinResult<Self> {
         let endian = binrw::Endian::Big; // MDL is always big-endian
 
-        // 0x00: tag (includes magic and version)
         let tag = u32::read_options(reader, endian, ())?;
-
-        // 0x04: skeletonKey
         let skeleton_key = u32::read_options(reader, endian, ())?;
-
-        // 0x08: jointCount
         let joint_count = u32::read_options(reader, endian, ())?;
-
-        // 0x0C: elements count
         let elements_count = u32::read_options(reader, endian, ())?;
-
-        // 0x10: elements offset (relative pointer)
         let elements_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x14: materials count
         let materials_count = u32::read_options(reader, endian, ())?;
-
-        // 0x18: materials offset (relative pointer)
         let materials_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x1C: bounds offset (relative pointer)
         let bounds_offset = RelOffset::read_options(reader, endian, ())?;
 
         // Read bounds (4 floats at bounds_offset)
@@ -159,7 +129,7 @@ impl BinRead for Model {
 
         reader.seek(SeekFrom::Start(header_end_pos))?;
 
-        Ok(Model {
+        Ok(Self {
             tag,
             skeleton_key,
             joint_count,
@@ -171,29 +141,6 @@ impl BinRead for Model {
 }
 
 /// Represents a mesh element within the model.
-///
-/// Layout (matching C# LoadElement):
-/// - 0x00: nameHash
-/// - 0x04: primitiveType
-/// - 0x08: index count
-/// - 0x0C: index offset (relative pointer) -> ushort[]
-/// - 0x10: numVertices
-/// - 0x14: vertexStride
-/// - 0x18: vertex data offset (relative pointer)
-/// - 0x1C: vertex stream count
-/// - 0x20: vertex stream offset (relative pointer)
-/// - 0x24: material offset (relative pointer) -> [offset, uint, materialHash]
-/// - 0x28: int
-/// - 0x2C: offset (relative pointer)
-/// - 0x30: offset (relative pointer)
-/// - 0x34: flags
-/// - 0x38: offset (relative pointer)
-/// - 0x3C: endLodNodeIndex (i16)
-/// - 0x3E: padding (u16)
-/// - 0x40: offset (relative pointer)
-/// - 0x44: uint
-/// - 0x48: offset (relative pointer)
-/// Total: 0x4C (76 bytes)
 #[cfg_attr(feature = "export", derive(Serialize, Deserialize))]
 #[derive(Debug)]
 pub struct Element {
@@ -214,72 +161,32 @@ impl BinRead for Element {
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
-        endian: binrw::Endian,
+        _: binrw::Endian,
         _: Self::Args<'_>,
     ) -> binrw::BinResult<Self> {
         let endian = binrw::Endian::Big;
 
-        // 0x00: nameHash
         let name_hash = u32::read_options(reader, endian, ())?;
-
-        // 0x04: primitiveType
         let primitive_type = u32::read_options(reader, endian, ())?;
-
-        // 0x08: index count
         let index_count = u32::read_options(reader, endian, ())?;
-
-        // 0x0C: index offset (relative pointer)
         let index_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x10: numVertices
         let num_vertices = u32::read_options(reader, endian, ())?;
-
-        // 0x14: vertexStride
         let vertex_stride = u32::read_options(reader, endian, ())?;
-
-        // 0x18: vertex data offset (relative pointer)
         let vertex_data_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x1C: vertex stream count
         let vertex_stream_count = u32::read_options(reader, endian, ())?;
-
-        // 0x20: vertex stream offset (relative pointer)
         let vertex_stream_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x24: material offset (relative pointer)
         let material_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x28: int (unused)
         let _unused_int = i32::read_options(reader, endian, ())?;
-
-        // 0x2C: offset (relative pointer, unused)
         let _unused_offset1 = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x30: offset (relative pointer, unused)
         let _unused_offset2 = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x34: flags
         let flags = u32::read_options(reader, endian, ())?;
-
-        // 0x38: offset (relative pointer, unused)
         let _unused_offset3 = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x3C: endLodNodeIndex (i16)
         let end_lod_node_index = i16::read_options(reader, endian, ())?;
-
-        // 0x3E: padding (u16)
         let _padding = u16::read_options(reader, endian, ())?;
-
-        // 0x40: offset (relative pointer, unused)
         let _unused_offset4 = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x44: uint (unused)
         let _unused_uint = u32::read_options(reader, endian, ())?;
-
-        // 0x48: offset (relative pointer, unused)
         let _unused_offset5 = RelOffset::read_options(reader, endian, ())?;
 
-        // Save position to restore after reading sub-data
         let element_end_pos = reader.stream_position()?;
 
         // Read indices from index_offset
@@ -303,7 +210,6 @@ impl BinRead for Element {
         }
 
         // Read material hash from material_offset
-        // C#: binReader3.ReadOffset(); binReader3.ReadUInt(); element.materialHash = binReader3.ReadUInt();
         reader.seek(SeekFrom::Start(material_offset.0))?;
         let _mat_offset = RelOffset::read_options(reader, endian, ())?;
         let _mat_uint = u32::read_options(reader, endian, ())?;
@@ -312,7 +218,7 @@ impl BinRead for Element {
         // Restore position for next element
         reader.seek(SeekFrom::Start(element_end_pos))?;
 
-        Ok(Element {
+        Ok(Self {
             name_hash,
             primitive_type,
             indices,
@@ -328,13 +234,6 @@ impl BinRead for Element {
 }
 
 /// Vertex stream descriptor.
-///
-/// Layout (matching C# LoadVertexStream):
-/// - 0x00: nameHash (u32)
-/// - 0x04: offset (u8)
-/// - 0x05: type (u8)
-/// - 0x06: size (u8)
-/// - 0x07: normalized (u8, bool)
 #[cfg_attr(feature = "export", derive(Serialize, Deserialize))]
 #[binread]
 #[br(big)]
@@ -355,16 +254,22 @@ pub struct VertexStream {
 pub enum VertexType {
     /// Type 1: i16 normalized to [-1, 1] by dividing by 32767
     NormalizedShort,
+
     /// Type 2: f32
     Float,
+
     /// Type 4: u8 normalized to [0, 1] by dividing by 255
     NormalizedByte,
+
     /// Type 5: i16 (raw, not normalized)
     Short,
+
     /// Type 6: Packed 10-10-10-2 format (3 values from one i32)
     Packed1010102,
+
     /// Type 7: u8 (raw, not normalized)
     Byte,
+
     /// Unknown type
     Unknown(u8),
 }
@@ -372,36 +277,18 @@ pub enum VertexType {
 impl From<u8> for VertexType {
     fn from(v: u8) -> Self {
         match v {
-            1 => VertexType::NormalizedShort,
-            2 => VertexType::Float,
-            4 => VertexType::NormalizedByte,
-            5 => VertexType::Short,
-            6 => VertexType::Packed1010102,
-            7 => VertexType::Byte,
-            _ => VertexType::Unknown(v),
+            1 => Self::NormalizedShort,
+            2 => Self::Float,
+            4 => Self::NormalizedByte,
+            5 => Self::Short,
+            6 => Self::Packed1010102,
+            7 => Self::Byte,
+            _ => Self::Unknown(v),
         }
     }
 }
 
 /// Material data structure.
-///
-/// Layout (matching C# LoadMaterial):
-/// - 0x00: filename offset (relative pointer) -> string
-/// - 0x04: materialHash
-/// - 0x08: materialInstanceHash
-/// - 0x0C: constant count
-/// - 0x10: constant hashes offset (relative pointer)
-/// - 0x14: constant data offset (relative pointer)
-/// - 0x18: texture count
-/// - 0x1C: texture hashes offset (relative pointer)
-/// - 0x20: textures offset (relative pointer)
-/// - 0x24: renderStateBits
-/// - 0x28: sourceBlendFunc (u16)
-/// - 0x2A: destBlendFunc (u16)
-/// - 0x2C: alphaTestFunc
-/// - 0x30: alphaTestRef
-/// - 0x34: material attributes offset (relative pointer)
-/// - 0x38: 4x u32 (unused)
 #[cfg_attr(feature = "export", derive(Serialize, Deserialize))]
 #[derive(Debug)]
 pub struct Material {
@@ -425,57 +312,26 @@ impl BinRead for Material {
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
-        endian: binrw::Endian,
+        _: binrw::Endian,
         _: Self::Args<'_>,
     ) -> binrw::BinResult<Self> {
         let endian = binrw::Endian::Big;
 
-        // 0x00: filename offset
         let filename_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x04: materialHash
         let material_hash = u32::read_options(reader, endian, ())?;
-
-        // 0x08: materialInstanceHash
         let material_instance_hash = u32::read_options(reader, endian, ())?;
-
-        // 0x0C: constant count
         let constant_count = u32::read_options(reader, endian, ())?;
-
-        // 0x10: constant hashes offset
         let constant_hashes_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x14: constant data offset
         let constant_data_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x18: texture count
         let texture_count = u32::read_options(reader, endian, ())?;
-
-        // 0x1C: texture hashes offset
         let texture_hashes_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x20: textures offset
         let textures_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x24: renderStateBits
         let render_state_bits = u32::read_options(reader, endian, ())?;
-
-        // 0x28: sourceBlendFunc (u16)
         let source_blend_func = u16::read_options(reader, endian, ())?;
-
-        // 0x2A: destBlendFunc (u16)
         let dest_blend_func = u16::read_options(reader, endian, ())?;
-
-        // 0x2C: alphaTestFunc
         let alpha_test_func = u32::read_options(reader, endian, ())?;
-
-        // 0x30: alphaTestRef
         let alpha_test_ref = f32::read_options(reader, endian, ())?;
-
-        // 0x34: material attributes offset
         let attributes_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x38: 4x u32 (unused)
         let _unused1 = u32::read_options(reader, endian, ())?;
         let _unused2 = u32::read_options(reader, endian, ())?;
         let _unused3 = u32::read_options(reader, endian, ())?;
@@ -533,7 +389,7 @@ impl BinRead for Material {
         // Restore position
         reader.seek(SeekFrom::Start(material_end_pos))?;
 
-        Ok(Material {
+        Ok(Self {
             filename,
             material_hash,
             material_instance_hash,
@@ -552,14 +408,6 @@ impl BinRead for Material {
 }
 
 /// Texture data structure.
-///
-/// Layout (matching C# LoadTexture):
-/// - 0x00: filename offset (relative pointer) -> string
-/// - 0x04: wrapBits
-/// - 0x08: borderColour
-/// - 0x0C: lodMin
-/// - 0x10: lodMax
-/// - 0x14: lodBias
 #[cfg_attr(feature = "export", derive(Serialize, Deserialize))]
 #[derive(Debug)]
 pub struct Texture {
@@ -576,27 +424,16 @@ impl BinRead for Texture {
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
-        endian: binrw::Endian,
+        _: binrw::Endian,
         _: Self::Args<'_>,
     ) -> binrw::BinResult<Self> {
         let endian = binrw::Endian::Big;
 
-        // 0x00: filename offset
         let filename_offset = RelOffset::read_options(reader, endian, ())?;
-
-        // 0x04: wrapBits
         let wrap_bits = u32::read_options(reader, endian, ())?;
-
-        // 0x08: borderColour
         let border_colour = u32::read_options(reader, endian, ())?;
-
-        // 0x0C: lodMin
         let lod_min = f32::read_options(reader, endian, ())?;
-
-        // 0x10: lodMax
         let lod_max = f32::read_options(reader, endian, ())?;
-
-        // 0x14: lodBias
         let lod_bias = f32::read_options(reader, endian, ())?;
 
         // Save position and read filename
@@ -608,7 +445,7 @@ impl BinRead for Texture {
 
         reader.seek(SeekFrom::Start(texture_end_pos))?;
 
-        Ok(Texture {
+        Ok(Self {
             filename,
             wrap_bits,
             border_colour,

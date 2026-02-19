@@ -2,35 +2,29 @@
 fn roundtrip_write_read() {
     use hdk_secure::hash::AfsHash;
 
-    const DEFAULT_KEY: [u8; 32] = [
-        0x2F, 0x5C, 0xED, 0xA6, 0x3A, 0x9A, 0x67, 0x2C, 0x03, 0x4C, 0x12, 0xE1, 0xE4, 0x25, 0xFA,
-        0x81, 0x16, 0x16, 0xAE, 0x1C, 0xE6, 0x6D, 0xEB, 0x95, 0xB7, 0xE6, 0xBF, 0x21, 0x40, 0x47,
-        0x02, 0xDC,
-    ];
-
     use crate::sharc::writer::SharcWriter;
 
-    let mut buf: Vec<u8> = Vec::new();
-    let mut w =
-        SharcWriter::new(&mut buf, DEFAULT_KEY, crate::structs::Endianness::Little).unwrap();
+    let test_key: [u8; 32] = [0; 32];
 
+    let mut buf: Vec<u8> = Vec::new();
+    let mut w = SharcWriter::new(&mut buf, test_key, crate::structs::Endianness::Little).unwrap();
     let file_a = b"Hello world".as_ref();
     let file_b = b"Another file!".as_ref();
 
     w.add_entry_from_bytes(
-        AfsHash::from_str("file_a"),
+        AfsHash::new_from_str("file_a"),
         crate::structs::CompressionType::ZLib,
         file_a,
     )
     .unwrap();
     w.add_entry_from_bytes(
-        AfsHash::from_str("file_b"),
+        AfsHash::new_from_str("file_b"),
         crate::structs::CompressionType::EdgeZLib,
         file_b,
     )
     .unwrap();
     w.add_entry_from_bytes(
-        AfsHash::from_str("secret_file"),
+        AfsHash::new_from_str("secret_file"),
         crate::structs::CompressionType::Encrypted,
         b"Secret",
     )
@@ -40,7 +34,7 @@ fn roundtrip_write_read() {
 
     // Now open with the reader
     let cursor = std::io::Cursor::new(out);
-    let archive = crate::sharc::reader::SharcReader::open(cursor, DEFAULT_KEY).unwrap();
+    let archive = crate::sharc::reader::SharcReader::open(cursor, test_key).unwrap();
 
-    assert_eq!(archive.header.file_count, 3);
+    assert_eq!(archive.header().file_count, 3);
 }

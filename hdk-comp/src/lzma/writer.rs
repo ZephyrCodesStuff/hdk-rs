@@ -3,8 +3,7 @@ use std::io::{self, Write};
 use byteorder::{BigEndian, WriteBytesExt};
 use lzma_rust2::LzmaWriter;
 
-use crate::lzma::{MAGIC, SEGMENT_SIZE};
-
+use crate::lzma::{SEGMENT_MAGIC, SEGMENT_SIZE};
 
 pub struct SegmentedLzmaWriter<W: Write> {
     inner: Option<W>,
@@ -38,22 +37,25 @@ impl<W: Write> SegmentedLzmaWriter<W> {
             &mut compressed_output,
             &super::LMZA_OPTIONS,
             Some(uncompressed_len as u64),
-        ).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         encoder.write_all(&self.raw_buffer)?;
-        encoder.finish().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        encoder
+            .finish()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         let compressed_size = compressed_output.len();
-        
+
         if compressed_size > 0xFFFF {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Segment compressed size too large for u16"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Segment compressed size too large for u16",
+            ));
         }
 
-        self.completed_segments.push((
-            compressed_output, 
-            compressed_size as u16, 
-            uncompressed_len
-        ));
+        self.completed_segments
+            .push((compressed_output, compressed_size as u16, uncompressed_len));
 
         self.raw_buffer.clear();
         Ok(())
@@ -67,24 +69,27 @@ impl<W: Write> SegmentedLzmaWriter<W> {
         let segment_count = self.completed_segments.len();
 
         if segment_count > 0xFFFF {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Too many segments (>65535)"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Too many segments (>65535)",
+            ));
         }
 
         // Calculate file layout
         let header_fixed_size = 16;
         let table_size = segment_count * 8;
         let raw_header_end = header_fixed_size + table_size;
-        
+
         // Padding for the header section
         let header_padding = (16 - (raw_header_end % 16)) % 16;
         let header_total_size = raw_header_end + header_padding;
 
         // Write file header
-        writer.write_all(MAGIC)?;                // 0-3: Magic
-        writer.write_all(&[1, 5])?;              // 4-5: Type, Version
+        writer.write_all(SEGMENT_MAGIC)?; // 0-3: Magic
+        writer.write_all(&[1, 5])?; // 4-5: Type, Version
         writer.write_u16::<BigEndian>(segment_count as u16)?; // 6-7: Count
         writer.write_u32::<BigEndian>(self.total_uncompressed_size)?; // 8-11: Uncompressed Size
-        
+
         // Calculate compressed size
         let mut total_compressed_file_size = header_total_size as u32;
         for (seg_data, _, _) in &self.completed_segments {
@@ -98,12 +103,12 @@ impl<W: Write> SegmentedLzmaWriter<W> {
 
         for (seg_data, c_size, u_size) in &self.completed_segments {
             let stored_u_size = if *u_size == 65536 { 0 } else { *u_size as u16 };
-            
+
             writer.write_u16::<BigEndian>(*c_size)?;
             writer.write_u16::<BigEndian>(stored_u_size)?;
-            
+
             // QUIRK: Offset | 1
-            let offset_val = (running_offset as i32) | 1; 
+            let offset_val = (running_offset as i32) | 1;
             writer.write_i32::<BigEndian>(offset_val)?;
 
             // Advance offset
@@ -117,7 +122,7 @@ impl<W: Write> SegmentedLzmaWriter<W> {
         // Write segments
         for (seg_data, _, _) in &self.completed_segments {
             writer.write_all(seg_data)?;
-            
+
             // QUIRK: Segment Padding
             let padding = (16 - (seg_data.len() % 16)) % 16;
             if padding > 0 {
@@ -132,24 +137,25 @@ impl<W: Write> SegmentedLzmaWriter<W> {
 impl<W: Write> Write for SegmentedLzmaWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut cursor = 0;
-        
+
         while cursor < buf.len() {
             let space_left = SEGMENT_SIZE - self.raw_buffer.len();
             let to_copy = std::cmp::min(space_left, buf.len() - cursor);
-            
-            self.raw_buffer.extend_from_slice(&buf[cursor..cursor + to_copy]);
+
+            self.raw_buffer
+                .extend_from_slice(&buf[cursor..cursor + to_copy]);
             cursor += to_copy;
 
             if self.raw_buffer.len() == SEGMENT_SIZE {
                 self.compress_current_chunk()?;
             }
         }
-        
+
         Ok(cursor)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        // Note: We DO NOT compress partial chunks on flush() because 
+        // Note: We DO NOT compress partial chunks on flush() because
         // that would create tiny segments and ruin the "64KB block" structure.
         // We only flush to the inner writer when finish() is called.
         Ok(())

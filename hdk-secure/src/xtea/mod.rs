@@ -27,14 +27,14 @@ pub struct Xtea {
 
 impl Xtea {
     const fn process_sub_keys(&mut self, mut sum: i32, index: i32, lookup: bool) {
+        let mut j = 0;
+
         if lookup {
-            let mut j = 0;
             while j < (((ROUNDS as i32) & index) >> 3) {
                 sum = sum.wrapping_add(0xF1BBCDC8_u32 as i32);
                 j += 1;
             }
         } else {
-            let mut j = 0;
             while j < (((ROUNDS as i32) & index) >> 3) {
                 let i = j as usize;
                 let mut blocksum = sum;

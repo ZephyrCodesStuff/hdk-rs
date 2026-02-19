@@ -5,8 +5,8 @@ mod segment;
 mod tests;
 pub mod writer;
 
-const MAGIC: &[u8] = b"segs";
-const SEGMENT_SIZE: usize = u16::MAX as usize + 1;
+pub const SEGMENT_MAGIC: &[u8] = b"segs";
+pub const SEGMENT_SIZE: usize = u16::MAX as usize + 1;
 
 /// These parameters match the recommended ones by Sony in their
 /// internal `EdgeLZMA` samples.

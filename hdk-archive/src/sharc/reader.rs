@@ -24,7 +24,7 @@ pub struct SharcReader<R: Read + Seek> {
     inner: R,
 
     /// The parsed SHARC header.
-    pub header: SharcHeader,
+    header: SharcHeader,
 
     /// Every entry in the archive's table of contents.
     entries: Vec<SharcEntry>,
@@ -137,6 +137,10 @@ impl<R: Read + Seek> SharcReader<R> {
         })
     }
 
+    pub fn header(&self) -> SharcHeader {
+        self.header.clone()
+    }
+    
     pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

@@ -5,10 +5,33 @@ use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 use aes::{Aes128, Block};
 use sha1_smol::Sha1;
 
-/// SDAT-specific cryptographic constants
-pub const SDAT_KEY: [u8; 16] = [
-    0x0D, 0x65, 0x5E, 0xF8, 0xE6, 0x74, 0xA9, 0x8A, 0xB8, 0x50, 0x5C, 0xFA, 0x7D, 0x01, 0x29, 0x33,
-];
+/// Collection of cryptographic keys required for SDAT operations.
+///
+/// These keys are proprietary and must be provided by the caller.
+/// The library does not include any hardcoded keys.
+#[derive(Debug, Clone, Copy)]
+pub struct SdatKeys {
+    /// Key used to derive the SDAT encryption key via XOR with `dev_hash`.
+    pub sdat_key: [u8; 16],
+
+    /// EDAT key version 0 - used for ERK derivation and hash operations.
+    pub edat_key_0: [u8; 16],
+
+    /// EDAT key version 1 - used for ERK derivation and hash operations.
+    pub edat_key_1: [u8; 16],
+
+    /// EDAT hash version 0 - used for hash key derivation.
+    pub edat_hash_0: [u8; 16],
+
+    /// EDAT hash version 1 - used for hash key derivation.
+    pub edat_hash_1: [u8; 16],
+
+    /// NPDRM OMAC key 2 - used for `dev_hash` generation via AES-CMAC.
+    pub npdrm_omac_key_2: [u8; 16],
+
+    /// NPDRM OMAC key 3 - used for `title_hash` generation via AES-CMAC.
+    pub npdrm_omac_key_3: [u8; 16],
+}
 
 /// SDAT flag value (also defined in headers.rs but duplicated here for convenience)
 pub const SDAT_FLAG: u32 = 0x0100_0000;
@@ -24,51 +47,29 @@ pub const EDAT_DEBUG_DATA_FLAG: u32 = 0x8000_0000;
 /// EDAT initialization vector (all zeros)
 pub const EDAT_IV: [u8; 16] = [0u8; 16];
 
-/// EDAT key version 0
-pub const EDAT_KEY_0: [u8; 16] = [
-    0xBE, 0x95, 0x9C, 0xA8, 0x30, 0x8D, 0xEF, 0xA2, 0xE5, 0xE1, 0x80, 0xC6, 0x37, 0x12, 0xA9, 0xAE,
-];
-
-/// EDAT key version 1
-pub const EDAT_KEY_1: [u8; 16] = [
-    0x4C, 0xA9, 0xC1, 0x4B, 0x01, 0xC9, 0x53, 0x09, 0x96, 0x9B, 0xEC, 0x68, 0xAA, 0x0B, 0xC0, 0x81,
-];
-
-/// EDAT hash version 0
-pub const EDAT_HASH_0: [u8; 16] = [
-    0xEF, 0xFE, 0x5B, 0xD1, 0x65, 0x2E, 0xEB, 0xC1, 0x19, 0x18, 0xCF, 0x7C, 0x04, 0xD4, 0xF0, 0x11,
-];
-
-/// EDAT hash version 1
-pub const EDAT_HASH_1: [u8; 16] = [
-    0x3D, 0x92, 0x69, 0x9B, 0x70, 0x5B, 0x07, 0x38, 0x54, 0xD8, 0xFC, 0xC6, 0xC7, 0x67, 0x27, 0x47,
-];
-
 /// SDAT footer version 1
 pub const SDAT_FOOTER_V1: [u8; 16] = [
     0x66, 0x69, 0x6E, 0x69, 0x73, 0x68, 0x65, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-/// NPDRM OMAC key 2 (used for `dev_hash` generation)
-pub const NPDRM_OMAC_KEY_2: [u8; 16] = [
-    0x6B, 0xA5, 0x29, 0x76, 0xEF, 0xDA, 0x16, 0xEF, 0x3C, 0x33, 0x9F, 0xB2, 0x97, 0x1E, 0x25, 0x6B,
-];
-
-/// NPDRM OMAC key 3 (used for `title_hash` generation)
-pub const NPDRM_OMAC_KEY_3: [u8; 16] = [
-    0x9B, 0x51, 0x5F, 0xEA, 0xCF, 0x75, 0x06, 0x49, 0x81, 0xAA, 0x60, 0x4D, 0x91, 0xA5, 0x4E, 0x97,
-];
-
-/// Cryptographic context for SDAT operations
+/// Cryptographic context for SDAT operations.
+///
+/// This context holds the keys required for SDAT encryption/decryption operations.
 pub struct CryptoContext {
-    // Context is stateless for now, but can be extended later
+    keys: SdatKeys,
 }
 
 impl CryptoContext {
-    /// Create a new cryptographic context
+    /// Create a new cryptographic context with the provided keys.
     #[must_use]
-    pub const fn new() -> Self {
-        Self {}
+    pub const fn new(keys: SdatKeys) -> Self {
+        Self { keys }
+    }
+
+    /// Get a reference to the keys used by this context.
+    #[must_use]
+    pub const fn keys(&self) -> &SdatKeys {
+        &self.keys
     }
 
     /// AES-CBC decryption
@@ -457,9 +458,9 @@ impl CryptoContext {
             0x10000000 => {
                 // Encrypted ERK - decrypt the key with EDAT_KEY + EDAT_IV and copy the original IV
                 let edat_key = if version != 0 {
-                    &EDAT_KEY_1
+                    &self.keys.edat_key_1
                 } else {
-                    &EDAT_KEY_0
+                    &self.keys.edat_key_0
                 };
                 self.aes_cbc_decrypt(edat_key, &EDAT_IV, key, &mut key_final)?;
                 iv_final.copy_from_slice(iv);
@@ -467,9 +468,9 @@ impl CryptoContext {
             0x20000000 => {
                 // Default ERK - use EDAT_KEY and EDAT_IV
                 let edat_key = if version != 0 {
-                    &EDAT_KEY_1
+                    &self.keys.edat_key_1
                 } else {
-                    &EDAT_KEY_0
+                    &self.keys.edat_key_0
                 };
                 key_final.copy_from_slice(edat_key);
                 iv_final.copy_from_slice(&EDAT_IV);
@@ -513,18 +514,18 @@ impl CryptoContext {
             0x10000000 => {
                 // Encrypted HASH - decrypt the hash with EDAT_KEY + EDAT_IV
                 let edat_key = if version != 0 {
-                    &EDAT_KEY_1
+                    &self.keys.edat_key_1
                 } else {
-                    &EDAT_KEY_0
+                    &self.keys.edat_key_0
                 };
                 self.aes_cbc_decrypt(edat_key, &EDAT_IV, hash, &mut hash_final)?;
             }
             0x20000000 => {
                 // Default HASH - use EDAT_HASH
                 let edat_hash = if version != 0 {
-                    &EDAT_HASH_1
+                    &self.keys.edat_hash_1
                 } else {
-                    &EDAT_HASH_0
+                    &self.keys.edat_hash_0
                 };
                 hash_final.copy_from_slice(edat_hash);
             }
@@ -545,7 +546,15 @@ impl CryptoContext {
 
 impl Default for CryptoContext {
     fn default() -> Self {
-        Self::new()
+        Self::new(SdatKeys {
+            sdat_key: [0u8; 16],
+            edat_key_0: [0u8; 16],
+            edat_key_1: [0u8; 16],
+            edat_hash_0: [0u8; 16],
+            edat_hash_1: [0u8; 16],
+            npdrm_omac_key_2: [0u8; 16],
+            npdrm_omac_key_3: [0u8; 16],
+        })
     }
 }
 
@@ -553,20 +562,21 @@ impl Default for CryptoContext {
 ///
 /// # Arguments
 ///
+/// * `sdat_key` - The SDAT key to XOR with `dev_hash`
 /// * `dev_hash` - 16-byte device hash from NPD header
 ///
 /// # Returns
 ///
-/// Returns 16-byte SDAT key (XOR of `dev_hash` and `SDAT_KEY`)
+/// Returns 16-byte SDAT key (XOR of `dev_hash` and `sdat_key`)
 ///
 /// # Requirements
 ///
 /// Addresses requirement 5.1, 5.2: SDAT key derivation
 #[must_use]
-pub fn generate_sdat_key(dev_hash: &[u8; 16]) -> [u8; 16] {
+pub fn generate_sdat_key(sdat_key: &[u8; 16], dev_hash: &[u8; 16]) -> [u8; 16] {
     let mut key = [0u8; 16];
     for i in 0..16 {
-        key[i] = dev_hash[i] ^ SDAT_KEY[i];
+        key[i] = dev_hash[i] ^ sdat_key[i];
     }
     key
 }
@@ -641,6 +651,25 @@ pub fn generate_encrypted_block_key(
 mod tests {
     use super::*;
 
+    /// Test SDAT key for testing (simple primitive value)
+    const TEST_SDAT_KEY: [u8; 16] = [0x01; 16];
+
+    /// Test EDAT key 0 for testing (simple primitive value)
+    const TEST_EDAT_KEY_0: [u8; 16] = [0x02; 16];
+
+    /// Helper function to create test keys
+    fn test_keys() -> SdatKeys {
+        SdatKeys {
+            sdat_key: TEST_SDAT_KEY,
+            edat_key_0: TEST_EDAT_KEY_0,
+            edat_key_1: [0x03; 16],
+            edat_hash_0: [0x04; 16],
+            edat_hash_1: [0x05; 16],
+            npdrm_omac_key_2: [0x06; 16],
+            npdrm_omac_key_3: [0x07; 16],
+        }
+    }
+
     #[test]
     fn test_sdat_key_generation() {
         let dev_hash = [
@@ -648,36 +677,37 @@ mod tests {
             0xFF, 0x00,
         ];
 
+        // XOR of dev_hash with TEST_SDAT_KEY ([0x01; 16])
         let expected = [
-            0x11 ^ 0x0D,
-            0x22 ^ 0x65,
-            0x33 ^ 0x5E,
-            0x44 ^ 0xF8,
-            0x55 ^ 0xE6,
-            0x66 ^ 0x74,
-            0x77 ^ 0xA9,
-            0x88 ^ 0x8A,
-            0x99 ^ 0xB8,
-            0xAA ^ 0x50,
-            0xBB ^ 0x5C,
-            0xCC ^ 0xFA,
-            0xDD ^ 0x7D,
+            0x11 ^ 0x01,
+            0x22 ^ 0x01,
+            0x33 ^ 0x01,
+            0x44 ^ 0x01,
+            0x55 ^ 0x01,
+            0x66 ^ 0x01,
+            0x77 ^ 0x01,
+            0x88 ^ 0x01,
+            0x99 ^ 0x01,
+            0xAA ^ 0x01,
+            0xBB ^ 0x01,
+            0xCC ^ 0x01,
+            0xDD ^ 0x01,
             0xEE ^ 0x01,
-            0xFF ^ 0x29,
-            0x33,
+            0xFF ^ 0x01,
+            0x01, // 0x00 ^ 0x01 is a no-op
         ];
 
-        let result = generate_sdat_key(&dev_hash);
+        let result = generate_sdat_key(&TEST_SDAT_KEY, &dev_hash);
         assert_eq!(result, expected);
     }
 
     #[test]
     fn test_sdat_key_generation_zero_hash() {
         let dev_hash = [0u8; 16];
-        let result = generate_sdat_key(&dev_hash);
+        let result = generate_sdat_key(&TEST_SDAT_KEY, &dev_hash);
 
-        // With zero dev_hash, result should be SDAT_KEY itself
-        assert_eq!(result, SDAT_KEY);
+        // With zero dev_hash, result should be TEST_SDAT_KEY itself
+        assert_eq!(result, TEST_SDAT_KEY);
     }
 
     #[test]
@@ -761,7 +791,7 @@ mod tests {
 
     #[test]
     fn test_encrypted_block_key_generation() {
-        let ctx = CryptoContext::new();
+        let ctx = CryptoContext::new(test_keys());
         let dev_hash = [
             0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE,
             0xFF, 0x00,
@@ -789,7 +819,7 @@ mod tests {
 
     #[test]
     fn test_aes_ecb_encrypt() {
-        let ctx = CryptoContext::new();
+        let ctx = CryptoContext::new(test_keys());
         let key = [0u8; 16];
         let input = [0u8; 16];
         let mut output = [0u8; 16];
@@ -803,7 +833,7 @@ mod tests {
 
     #[test]
     fn test_aes_cbc_encrypt_decrypt() {
-        let ctx = CryptoContext::new();
+        let ctx = CryptoContext::new(test_keys());
         let key = [
             0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
             0x4f, 0x3c,
@@ -834,10 +864,10 @@ mod tests {
 
     #[test]
     fn test_aes_cbc_known_vectors() {
-        let ctx = CryptoContext::new();
+        let ctx = CryptoContext::new(test_keys());
 
-        // Test with EDAT_KEY_0 and EDAT_IV (from the C code)
-        let key = EDAT_KEY_0;
+        // Test with TEST_EDAT_KEY_0 and EDAT_IV
+        let key = TEST_EDAT_KEY_0;
         let iv = EDAT_IV;
         let plaintext = [
             0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
@@ -879,7 +909,7 @@ mod tests {
 
     #[test]
     fn test_hmac_sha1() {
-        let ctx = CryptoContext::new();
+        let ctx = CryptoContext::new(test_keys());
         let key = b"key";
         let data = b"The quick brown fox jumps over the lazy dog";
 
@@ -897,7 +927,7 @@ mod tests {
 
     #[test]
     fn test_aes_cmac_empty() {
-        let ctx = CryptoContext::new();
+        let ctx = CryptoContext::new(test_keys());
         let key = [
             0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
             0x4f, 0x3c,
@@ -912,7 +942,7 @@ mod tests {
 
     #[test]
     fn test_aes_cmac_single_block() {
-        let ctx = CryptoContext::new();
+        let ctx = CryptoContext::new(test_keys());
         let key = [
             0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf,
             0x4f, 0x3c,
@@ -930,7 +960,7 @@ mod tests {
 
     #[test]
     fn test_invalid_key_length() {
-        let ctx = CryptoContext::new();
+        let ctx = CryptoContext::new(test_keys());
         let short_key = [0u8; 8];
         let input = [0u8; 16];
         let mut output = [0u8; 16];
@@ -947,7 +977,7 @@ mod tests {
 
     #[test]
     fn test_invalid_iv_length() {
-        let ctx = CryptoContext::new();
+        let ctx = CryptoContext::new(test_keys());
         let key = [0u8; 16];
         let short_iv = [0u8; 8];
         let input = [0u8; 16];

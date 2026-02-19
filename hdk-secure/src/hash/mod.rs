@@ -4,15 +4,24 @@ use std::path::Path;
 pub struct AfsHash(pub i32);
 
 impl AfsHash {
-    pub fn from_str(s: &str) -> Self {
+    /// Returns `true` if the given string could be a valid uppercase hex AfsHash.
+    ///
+    /// This does not verify that the string is an actual AfsHash: only that it matches the expected format.
+    pub fn is_valid_hash_str(s: &str) -> bool {
+        s.len() == 8
+            && s.chars()
+                .all(|c| c.is_ascii_hexdigit() && (c.is_ascii_uppercase() || c.is_ascii_digit()))
+    }
+
+    pub fn new_from_str(s: &str) -> Self {
         Self(afs_hash(s.chars()))
     }
 
     /// Create an AfsHash from a file path.
-    /// 
+    ///
     /// If the file name is already a valid uppercase hex hash, it will be used directly.
     /// Otherwise, the hash will be computed from the full path string.
-    pub fn from_path(path: &Path) -> Self {
+    pub fn new_from_path(path: &Path) -> Self {
         let s = path.to_str().unwrap_or_default();
         
         // Check if file name is already a hash in uppercase hex
@@ -29,7 +38,7 @@ impl AfsHash {
                 }
             }
         }
-        
+
         // Otherwise, compute the hash from the path string
         Self(afs_hash(s.chars()))
     }
@@ -37,9 +46,12 @@ impl AfsHash {
 
 impl core::fmt::Display for AfsHash {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // TODO: Investigate why this currently works..?
-        //       (AfsHash is signed but we print as unsigned)
-        write!(f, "{:08X}", self.0 as u32)
+        let bytes = self.0.to_be_bytes();
+        write!(
+            f,
+            "{:02X}{:02X}{:02X}{:02X}",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     }
 }
 

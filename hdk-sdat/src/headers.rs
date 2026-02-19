@@ -1,10 +1,14 @@
 //! SDAT header structures and parsing
 
 use crate::error::{MemoryError, SdatError};
+use binrw::{BinRead, BinWrite};
+use enumflags2::{BitFlags, bitflags};
 
 /// NPD (`PlayStation` Data) header structure
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, BinRead, BinWrite)]
+#[br(big)]
+#[bw(big)]
 pub struct NpdHeader {
     pub magic: [u8; 4],
     pub version: u32,
@@ -27,6 +31,33 @@ pub struct EdatHeader {
     pub file_size: u64,
 }
 
+/// EDAT flag enum for typed BitFlags
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[bitflags]
+#[repr(u32)]
+pub enum EdatFlag {
+    Compressed = 0b0000_0001,
+    Flag0x02 = 0b0000_0010,
+    EncryptedKey = 0b0000_1000,
+    Flag0x10 = 0b0001_0000,
+    Flag0x20 = 0b0010_0000,
+    DebugData = 0b1000_0000_0000_0000_0000_0000_0000_0000,
+}
+
+impl EdatHeader {
+    /// Return flags as typed BitFlags
+    #[must_use]
+    pub fn flags_bits(&self) -> BitFlags<EdatFlag> {
+        // from_bits_truncate will ignore unknown bits
+        BitFlags::from_bits_truncate(self.flags)
+    }
+
+    /// Set flags from BitFlags
+    pub fn set_flags_from_bits(&mut self, bits: BitFlags<EdatFlag>) {
+        self.flags = bits.bits();
+    }
+}
+
 impl NpdHeader {
     /// Size of NPD header in bytes
     pub const SIZE: usize = 0x80;
@@ -42,60 +73,10 @@ impl NpdHeader {
                 available: buffer.len(),
             }));
         }
-
-        let mut magic = [0u8; 4];
-        magic.copy_from_slice(&buffer[0..4]);
-
-        let version = u32::from_be_bytes([buffer[4], buffer[5], buffer[6], buffer[7]]);
-        let license = u32::from_be_bytes([buffer[8], buffer[9], buffer[10], buffer[11]]);
-        let type_ = u32::from_be_bytes([buffer[12], buffer[13], buffer[14], buffer[15]]);
-
-        let mut content_id = [0u8; 0x30];
-        content_id.copy_from_slice(&buffer[16..16 + 0x30]);
-
-        let mut digest = [0u8; 0x10];
-        digest.copy_from_slice(&buffer[64..64 + 0x10]);
-
-        let mut title_hash = [0u8; 0x10];
-        title_hash.copy_from_slice(&buffer[80..80 + 0x10]);
-
-        let mut dev_hash = [0u8; 0x10];
-        dev_hash.copy_from_slice(&buffer[96..96 + 0x10]);
-
-        let unk1 = u64::from_be_bytes([
-            buffer[112],
-            buffer[113],
-            buffer[114],
-            buffer[115],
-            buffer[116],
-            buffer[117],
-            buffer[118],
-            buffer[119],
-        ]);
-
-        let unk2 = u64::from_be_bytes([
-            buffer[120],
-            buffer[121],
-            buffer[122],
-            buffer[123],
-            buffer[124],
-            buffer[125],
-            buffer[126],
-            buffer[127],
-        ]);
-
-        Ok(Self {
-            magic,
-            version,
-            license,
-            type_,
-            content_id,
-            digest,
-            title_hash,
-            dev_hash,
-            unk1,
-            unk2,
-        })
+        // Use `binrw` to parse the header from the provided buffer (big-endian per struct attrs)
+        let mut cursor = std::io::Cursor::new(buffer);
+        Self::read(&mut cursor)
+            .map_err(|e| SdatError::InvalidHeader(format!("Failed to read NPD header: {}", e)))
     }
 
     /// Validate NPD header structure and magic numbers
@@ -117,7 +98,7 @@ impl NpdHeader {
     /// # Returns
     ///
     /// Returns a Content ID string suitable for SDAT files in the format "XXYYYY-AAAABBBBB_CC-DDDDDDDDDDDDDDDD"
-    #[must_use] 
+    #[must_use]
     pub fn generate_content_id() -> String {
         let prefix = "BLAHAJ";
 
@@ -144,7 +125,7 @@ impl NpdHeader {
 
     /// Get region code from system locale (LANG environment variable)
     #[cfg(feature = "metadata")]
-    #[must_use] 
+    #[must_use]
     pub fn region_from_locale() -> String {
         std::env::var("LANG")
             .ok()
@@ -163,14 +144,14 @@ impl NpdHeader {
     /// # Returns
     ///
     /// Returns a new `NpdHeader` configured for SDAT files
-    #[must_use] 
+    #[must_use]
     pub fn new_sdat(content_id: [u8; 0x30], dev_hash: [u8; 16], title_hash: [u8; 16]) -> Self {
         // Generate a random digest (C implementation uses prng)
         // For now, we'll use a fixed random-like pattern to avoid adding rand dependency if not needed
         // In a real implementation, this should be cryptographically secure random
         let mut digest = [0u8; 16];
-        for i in 0..16 {
-            digest[i] = (i as u8).wrapping_mul(17).wrapping_add(0x42);
+        for (i, val) in (0..16).enumerate() {
+            digest[i] = (val as u8).wrapping_mul(17).wrapping_add(0x42);
         }
 
         Self {
@@ -199,17 +180,9 @@ impl NpdHeader {
                 available: buffer.len(),
             }));
         }
-
-        buffer[0..4].copy_from_slice(&self.magic);
-        buffer[4..8].copy_from_slice(&self.version.to_be_bytes());
-        buffer[8..12].copy_from_slice(&self.license.to_be_bytes());
-        buffer[12..16].copy_from_slice(&self.type_.to_be_bytes());
-        buffer[16..16 + 0x30].copy_from_slice(&self.content_id);
-        buffer[64..64 + 0x10].copy_from_slice(&self.digest);
-        buffer[80..80 + 0x10].copy_from_slice(&self.title_hash);
-        buffer[96..96 + 0x10].copy_from_slice(&self.dev_hash);
-        buffer[112..120].copy_from_slice(&self.unk1.to_be_bytes());
-        buffer[120..128].copy_from_slice(&self.unk2.to_be_bytes());
+        let mut cursor = std::io::Cursor::new(buffer);
+        self.write(&mut cursor)
+            .map_err(|e| SdatError::InvalidHeader(format!("Failed to write NPD header: {}", e)))?;
 
         Ok(())
     }
@@ -246,7 +219,7 @@ impl EdatHeader {
     }
 
     /// Check if this is an SDAT file based on flags
-    #[must_use] 
+    #[must_use]
     pub const fn is_sdat(&self) -> bool {
         (self.flags & Self::SDAT_FLAG) != 0
     }
@@ -262,7 +235,7 @@ impl EdatHeader {
     /// # Returns
     ///
     /// Returns a new `EdatHeader` configured for SDAT files
-    #[must_use] 
+    #[must_use]
     pub const fn new_sdat(file_size: u64, block_size: u32, compressed: bool) -> Self {
         let mut flags = Self::SDAT_FLAG;
 

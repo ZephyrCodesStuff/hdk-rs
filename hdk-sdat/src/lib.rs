@@ -12,7 +12,7 @@ pub mod reader;
 pub mod writer;
 
 // Re-export main types for convenience
-pub use crypto::CryptoContext;
+pub use crypto::{CryptoContext, SdatKeys};
 pub use error::{CompressionError, CryptoError, MemoryError, SdatError};
 pub use headers::{EdatHeader, NpdHeader};
 pub use memory::MemoryBuffer;
@@ -25,4 +25,5 @@ mod tests;
 
 // Extracted DataBlockProcessor to its own module
 pub mod block;
+pub mod options;
 pub use block::DataBlockProcessor;

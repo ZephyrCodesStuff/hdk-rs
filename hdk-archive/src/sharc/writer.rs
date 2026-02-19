@@ -278,6 +278,10 @@ impl<W: Write> SharcWriter<W> {
 
         // 3) Build ToC (plain) then encrypt with iv+1
         let mut toc_buf: Vec<u8> = Vec::with_capacity(toc_size);
+
+        // Sort entries in descending hash order
+        self.entries.sort_by(|a, b| b.name_hash.0.cmp(&a.name_hash.0));
+
         for e in &self.entries {
             match self.endianness {
                 Endianness::Little => {

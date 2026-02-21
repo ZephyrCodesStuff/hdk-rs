@@ -3,6 +3,8 @@ use wasm_bindgen::prelude::*;
 
 use hdk_sdat::crypto::SdatKeys;
 
+use crate::sdat::to_arr16;
+
 #[wasm_bindgen]
 pub struct SdatWriter {
     #[wasm_bindgen(skip)]

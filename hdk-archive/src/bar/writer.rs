@@ -227,6 +227,9 @@ impl<W: Write> BarWriter<W> {
         self.inner.write_u32::<LittleEndian>(file_count)?;
 
         // Write ToC
+        // Sort entries in descending hash order
+        self.entries.sort_by_key(|b| std::cmp::Reverse(b.name_hash.0));
+
         for entry in &self.entries {
             self.inner.write_i32::<LittleEndian>(entry.name_hash.0)?;
 

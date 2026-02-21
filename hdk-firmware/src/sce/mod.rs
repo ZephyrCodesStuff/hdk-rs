@@ -12,7 +12,8 @@ pub mod reader;
 pub mod structs;
 pub mod writer;
 
+pub use crypto::{EcdsaCurve, EcdsaKeypair};
 pub use errors::*;
 pub use reader::SceArchive;
 pub use structs::*;
-pub use writer::SceWriter;
+pub use writer::{SceWriter, SectionMeta, resign_sce};

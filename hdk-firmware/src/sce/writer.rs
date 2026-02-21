@@ -1,10 +1,10 @@
 use crate::sce::errors::SceError;
-use crate::sce::structs::SCE_METADATA_INFO_SIZE;
+use crate::sce::structs::{SCE_METADATA_INFO_SIZE, SCE_SIGNATURE_SIZE, SCESignature};
 use crate::sce::{SCE_METADATA_SECTION_HEADER_SIZE, crypto};
 use aes::cipher::KeyIvInit;
 use byteorder::{BigEndian, WriteBytesExt};
 use ctr::cipher::StreamCipher;
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 
 /// Metadata for a section to be added to the SCE package.
 #[derive(Debug, Clone)]
@@ -81,7 +81,7 @@ impl<W: Write + Seek> SceWriter<W> {
     }
 
     /// Add a section metadata entry. The actual section bytes will be provided
-    /// during `finish_with` via the callback.
+    /// during `finish` via the callback.
     pub fn add_section(&mut self, meta: SectionMeta) {
         self.sections.push(meta);
     }
@@ -89,14 +89,20 @@ impl<W: Write + Seek> SceWriter<W> {
     /// Finish writing the package. The callback is invoked once per section in
     /// the same order as `add_section` and must write exactly `data_size` bytes
     /// for that section.
-    pub fn finish_with<F>(
+    ///
+    /// If `keypair` is provided, the package will be signed with ECDSA and a
+    /// signature block will be written. This requires `W: Read` to read back
+    /// the header data for signing.
+    pub fn finish<F>(
         mut self,
         erk: &[u8; 32],
         riv: &[u8; 16],
+        keypair: Option<&crypto::EcdsaKeypair>,
         mut write_section: F,
     ) -> Result<W, SceError>
     where
         F: FnMut(usize, &mut dyn Write) -> io::Result<()>,
+        W: Read,
     {
         // Compute metadata structures in memory first.
         let section_count = self.sections.len() as u32;
@@ -109,17 +115,27 @@ impl<W: Write + Seek> SceWriter<W> {
         meta_info[32..48].copy_from_slice(&self.meta_iv);
         // iv_pad stays zero
 
+        // Calculate signature_input_length if signing, otherwise 0
+        let sig_input_length: u64 = if keypair.is_some() {
+            32 // SCE header
+            + SCE_METADATA_INFO_SIZE as u64
+            + 32 // metadata header
+            + (SCE_METADATA_SECTION_HEADER_SIZE as u64 * section_count as u64)
+            + (16 * key_count as u64)
+        } else {
+            0
+        };
+
         // metadata headers
-        // We'll build the metadata header with correct section data offsets.
         // MetadataHeader: 8 + 4*6 = 32 bytes
         let mut meta_headers = Vec::new();
-        meta_headers.extend_from_slice(&0u64.to_be_bytes()); // signature_input_length
-        meta_headers.extend_from_slice(&0u32.to_be_bytes());
+        meta_headers.extend_from_slice(&sig_input_length.to_be_bytes()); // signature_input_length
+        meta_headers.extend_from_slice(&0u32.to_be_bytes()); // unknown_0
         meta_headers.extend_from_slice(&section_count.to_be_bytes());
         meta_headers.extend_from_slice(&key_count.to_be_bytes());
-        meta_headers.extend_from_slice(&0u32.to_be_bytes());
-        meta_headers.extend_from_slice(&0u32.to_be_bytes());
-        meta_headers.extend_from_slice(&0u32.to_be_bytes());
+        meta_headers.extend_from_slice(&0u32.to_be_bytes()); // opt_header_size
+        meta_headers.extend_from_slice(&0u32.to_be_bytes()); // unknown_1
+        meta_headers.extend_from_slice(&0u32.to_be_bytes()); // unknown_2
 
         // Reserve space for section headers; we'll fill known fields now and patch
         // data_offset/data_size later after writing the actual section bytes.
@@ -184,7 +200,7 @@ impl<W: Write + Seek> SceWriter<W> {
         meta_headers.extend_from_slice(&section_headers_bytes);
         meta_headers.extend_from_slice(&key_table_bytes);
 
-        // Encrypt metadata headers using meta_key/meta_iv (AES-CTR) -> metadata headers bytes are transformed
+        // Encrypt metadata headers using meta_key/meta_iv (AES-CTR)
         let mut encrypted_meta_headers = meta_headers.clone();
         crypto::aes_decrypt_ctr(&self.meta_key, &self.meta_iv, &mut encrypted_meta_headers)
             .map_err(|_| SceError::InvalidMetadata)?;
@@ -192,9 +208,19 @@ impl<W: Write + Seek> SceWriter<W> {
         let headers_start_pos = self.inner.stream_position()?;
         self.inner.write_all(&encrypted_meta_headers)?;
 
+        // Write placeholder signature if signing
+        let sig_pos = if keypair.is_some() {
+            let pos = self.inner.stream_position()?;
+            let placeholder_sig = [0u8; SCE_SIGNATURE_SIZE];
+            self.inner.write_all(&placeholder_sig)?;
+            Some(pos)
+        } else {
+            None
+        };
+
         // Compute header sizes
         let header_end_pos = self.inner.stream_position()?;
-        let se_hsize = header_end_pos; // total header size up to end of metadata headers
+        let se_hsize = header_end_pos; // total header size up to end of metadata headers (+ signature if present)
 
         // Data: stream each section and record actual offsets/sizes so we can patch section headers
         let mut actual_data_length: u64 = 0;
@@ -204,15 +230,14 @@ impl<W: Write + Seek> SceWriter<W> {
             // record start position
             let start_pos = self.inner.stream_position()?;
             // Prepare writer chain: optionally encryption and/or compression
-            // Base writer is self.inner (we pass a &mut dyn Write to the callback)
             if s.encrypted == 3 {
                 // Create Ctr cipher for this section
-                struct CtrWriter<'a, W: Write> {
-                    inner: &'a mut W,
+                struct CtrWriter<'a, WW: Write> {
+                    inner: &'a mut WW,
                     cipher: ctr::Ctr64BE<aes::Aes128>,
                 }
 
-                impl<W: Write> Write for CtrWriter<'_, W> {
+                impl<WW: Write> Write for CtrWriter<'_, WW> {
                     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
                         let mut tmp = buf.to_vec();
                         self.cipher.apply_keystream(&mut tmp);
@@ -294,15 +319,88 @@ impl<W: Write + Seek> SceWriter<W> {
         self.inner.write_all(&patched_encrypted_meta_headers)?;
 
         // Patch header: se_hsize and se_esize
-        let cur = self.inner.stream_position()?;
         let se_esize = actual_data_length;
         self.inner.seek(SeekFrom::Start(se_hsize_pos))?;
         self.inner.write_u64::<BigEndian>(se_hsize)?;
         self.inner.write_u64::<BigEndian>(se_esize)?;
-        self.inner.seek(SeekFrom::Start(cur))?;
+
+        // Sign the header if keypair provided
+        if let (Some(kp), Some(sig_pos)) = (keypair, sig_pos) {
+            // Read header data for signing (up to signature_input_length)
+            self.inner.seek(SeekFrom::Start(0))?;
+            let mut header_data = vec![0u8; sig_input_length as usize];
+            self.inner.read_exact(&mut header_data)?;
+
+            // Sign the header
+            let (r, s) = crypto::ecdsa_sign(kp, &header_data).map_err(SceError::Io)?;
+
+            // Write signature
+            let signature = SCESignature {
+                r,
+                s,
+                padding: [0u8; 6],
+            };
+            self.inner.seek(SeekFrom::Start(sig_pos))?;
+            signature.write_to(&mut self.inner)?;
+        }
+
+        // Seek to end
+        self.inner.seek(SeekFrom::End(0))?;
 
         Ok(self.inner)
     }
+}
+
+/// Re-sign an existing SCE file with a new ECDSA keypair.
+///
+/// This function reads the file, computes the signature over the header data
+/// (up to signature_input_length), and writes the new signature in place.
+///
+/// Note: The file must have its metadata already decrypted (debug mode) or
+/// you must provide the correct keys to decrypt it first.
+pub fn resign_sce<RW: Read + Write + Seek>(
+    file: &mut RW,
+    keypair: &crypto::EcdsaKeypair,
+    erk: &[u8; 32],
+    riv: &[u8; 16],
+) -> Result<SCESignature, SceError> {
+    use crate::sce::reader::SceArchive;
+
+    // Open and load metadata to get signature offset
+    file.seek(SeekFrom::Start(0))?;
+
+    // Read the entire file into memory for processing
+    let mut file_data = Vec::new();
+    file.read_to_end(&mut file_data)?;
+
+    let mut archive = SceArchive::open(std::io::Cursor::new(&file_data))?;
+    archive.load_metadata(erk, riv)?;
+
+    let sig_input_length = archive
+        .signature_input_length()
+        .ok_or(SceError::InvalidMetadata)?;
+
+    let sig_offset = archive
+        .signature_offset()
+        .ok_or(SceError::InvalidMetadata)?;
+
+    // Read header data for signing
+    let header_data = &file_data[..sig_input_length as usize];
+
+    // Sign
+    let (r, s) = crypto::ecdsa_sign(keypair, header_data).map_err(SceError::Io)?;
+
+    let signature = SCESignature {
+        r,
+        s,
+        padding: [0u8; 6],
+    };
+
+    // Write new signature
+    file.seek(SeekFrom::Start(sig_offset))?;
+    signature.write_to(file)?;
+
+    Ok(signature)
 }
 
 #[cfg(test)]
@@ -352,7 +450,7 @@ mod tests {
         let riv = [0x0u8; 16];
 
         let mut idx = 0usize;
-        w.finish_with(&erk, &riv, |_i, out| {
+        w.finish(&erk, &riv, None, |_i, out| {
             if idx == 0 {
                 out.write_all(&data_a)?;
             } else {

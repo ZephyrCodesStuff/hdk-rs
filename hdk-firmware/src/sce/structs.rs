@@ -5,6 +5,9 @@ pub const SCE_MAGIC: &[u8; 4] = b"SCE\0";
 pub const SCE_HEADER_SIZE: usize = 32;
 pub const SCE_METADATA_INFO_SIZE: usize = 64;
 pub const SCE_METADATA_SECTION_HEADER_SIZE: usize = 48;
+pub const SCE_SIGNATURE_SIZE: usize = 48;
+pub const SCE_SIGNATURE_R_SIZE: usize = 21;
+pub const SCE_SIGNATURE_S_SIZE: usize = 21;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SCEHeader {
@@ -38,9 +41,64 @@ impl SCEHeader {
         })
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn check_magic(&self) -> bool {
         &self.magic.to_be_bytes() == SCE_MAGIC
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SCESignature {
+    pub r: [u8; SCE_SIGNATURE_R_SIZE],
+    pub s: [u8; SCE_SIGNATURE_S_SIZE],
+    pub padding: [u8; 6],
+}
+
+impl SCESignature {
+    /// Load signature from a byte slice (must be at least 48 bytes)
+    #[must_use]
+    pub fn load_from_bytes(data: &[u8]) -> Self {
+        let mut r = [0u8; SCE_SIGNATURE_R_SIZE];
+        let mut s = [0u8; SCE_SIGNATURE_S_SIZE];
+        let mut padding = [0u8; 6];
+
+        r.copy_from_slice(&data[0..SCE_SIGNATURE_R_SIZE]);
+        s.copy_from_slice(&data[SCE_SIGNATURE_R_SIZE..SCE_SIGNATURE_R_SIZE + SCE_SIGNATURE_S_SIZE]);
+        padding.copy_from_slice(
+            &data[SCE_SIGNATURE_R_SIZE + SCE_SIGNATURE_S_SIZE..SCE_SIGNATURE_SIZE],
+        );
+
+        Self { r, s, padding }
+    }
+
+    /// Load signature from a reader
+    pub fn load_from_reader<R: Read>(reader: &mut R) -> Result<Self, std::io::Error> {
+        let mut buf = [0u8; SCE_SIGNATURE_SIZE];
+        reader.read_exact(&mut buf)?;
+        Ok(Self::load_from_bytes(&buf))
+    }
+
+    /// Serialize signature to bytes
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; SCE_SIGNATURE_SIZE] {
+        let mut out = [0u8; SCE_SIGNATURE_SIZE];
+        out[0..SCE_SIGNATURE_R_SIZE].copy_from_slice(&self.r);
+        out[SCE_SIGNATURE_R_SIZE..SCE_SIGNATURE_R_SIZE + SCE_SIGNATURE_S_SIZE]
+            .copy_from_slice(&self.s);
+        out[SCE_SIGNATURE_R_SIZE + SCE_SIGNATURE_S_SIZE..SCE_SIGNATURE_SIZE]
+            .copy_from_slice(&self.padding);
+        out
+    }
+
+    /// Write signature to a writer
+    pub fn write_to<W: std::io::Write>(&self, writer: &mut W) -> Result<(), std::io::Error> {
+        writer.write_all(&self.to_bytes())
+    }
+
+    /// Check if the signature is all zeros (unsigned/placeholder)
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.r.iter().all(|&b| b == 0) && self.s.iter().all(|&b| b == 0)
     }
 }
 
@@ -53,7 +111,7 @@ pub struct MetadataInfo {
 }
 
 impl MetadataInfo {
-    #[must_use] 
+    #[must_use]
     pub fn load_from_bytes(data: &[u8]) -> Self {
         let mut key = [0u8; 16];
         let mut key_pad = [0u8; 16];

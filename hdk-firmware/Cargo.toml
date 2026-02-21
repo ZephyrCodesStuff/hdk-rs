@@ -11,3 +11,6 @@ ctr = "0.9.2"
 flate2 = "1.1.5"
 sha1_smol = "1.0.1"
 thiserror = "2.0.17"
+p192 = { version = "0.13.0", features = ["arithmetic"] }
+elliptic-curve = { version = "0.13.8", features = ["sec1", "arithmetic"] }
+crypto-bigint = "0.5.5"

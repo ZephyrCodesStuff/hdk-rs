@@ -2,7 +2,9 @@ use cbc::cipher::{KeyIvInit, StreamCipher};
 
 use crate::sce::crypto;
 use crate::sce::errors::SceError;
-use crate::sce::structs::{MetadataSectionHeader, SCE_HEADER_SIZE};
+use crate::sce::structs::{
+    MetadataSectionHeader, SCE_HEADER_SIZE, SCE_SIGNATURE_SIZE, SCESignature,
+};
 use std::io::{Read, Seek};
 
 pub struct SceArchive<R: Read + Seek> {
@@ -12,6 +14,8 @@ pub struct SceArchive<R: Read + Seek> {
     meta_header: Option<crate::sce::structs::MetadataHeader>,
     section_headers: Vec<MetadataSectionHeader>,
     data_keys: Vec<u8>,
+    signature: Option<SCESignature>,
+    signature_offset: Option<u64>,
     file_size: u64,
 }
 
@@ -35,6 +39,8 @@ impl<R: Read + Seek> SceArchive<R> {
             meta_header: None,
             section_headers: Vec::new(),
             data_keys: Vec::new(),
+            signature: None,
+            signature_offset: None,
             file_size,
         })
     }
@@ -119,12 +125,63 @@ impl<R: Read + Seek> SceArchive<R> {
 
         let data_keys = metadata_headers[keys_start..keys_start + data_keys_length].to_vec();
 
+        // Parse signature: located after keys + optional headers
+        // signature_input_length from metadata header tells us where the signature starts
+        let sig_offset = meta_header.signature_input_length;
+        let signature = if sig_offset > 0
+            && (sig_offset as usize) + SCE_SIGNATURE_SIZE <= (self.file_size as usize)
+        {
+            self.inner.seek(std::io::SeekFrom::Start(sig_offset))?;
+            let mut sig_bytes = [0u8; SCE_SIGNATURE_SIZE];
+            self.inner.read_exact(&mut sig_bytes)?;
+            Some(SCESignature::load_from_bytes(&sig_bytes))
+        } else {
+            None
+        };
+
         self.meta_info = Some(meta_info);
         self.meta_header = Some(meta_header);
         self.section_headers = section_headers;
         self.data_keys = data_keys;
+        self.signature = signature;
+        self.signature_offset = Some(sig_offset);
 
         Ok(())
+    }
+
+    /// Get the signature if metadata has been loaded
+    pub fn signature(&self) -> Option<&SCESignature> {
+        self.signature.as_ref()
+    }
+
+    /// Get the offset where the signature is located in the file
+    pub fn signature_offset(&self) -> Option<u64> {
+        self.signature_offset
+    }
+
+    /// Get the signature input length (bytes to hash for signing)
+    pub fn signature_input_length(&self) -> Option<u64> {
+        self.meta_header
+            .as_ref()
+            .map(|mh| mh.signature_input_length)
+    }
+
+    /// Read the raw header bytes up to signature_input_length for signing/verification
+    pub fn read_signature_input(&mut self) -> Result<Vec<u8>, SceError> {
+        let sig_input_len = self
+            .meta_header
+            .as_ref()
+            .ok_or(SceError::InvalidMetadata)?
+            .signature_input_length as usize;
+
+        if sig_input_len == 0 || sig_input_len > self.file_size as usize {
+            return Err(SceError::InvalidMetadata);
+        }
+
+        self.inner.seek(std::io::SeekFrom::Start(0))?;
+        let mut buf = vec![0u8; sig_input_len];
+        self.inner.read_exact(&mut buf)?;
+        Ok(buf)
     }
 
     pub fn sections_metadata(&self) -> &[MetadataSectionHeader] {
@@ -209,5 +266,20 @@ impl<R: Read + Seek> SceArchive<R> {
         let mut buf = Vec::new();
         r.read_to_end(&mut buf).map_err(SceError::Io)?;
         Ok(buf)
+    }
+
+    /// Verify the ECDSA signature of the SCE file.
+    ///
+    /// Returns `Ok(true)` if the signature is valid, `Ok(false)` if invalid,
+    /// or an error if the signature cannot be verified (e.g., metadata not loaded).
+    pub fn verify_signature(&mut self, keypair: &crypto::EcdsaKeypair) -> Result<bool, SceError> {
+        let signature = self.signature.ok_or(SceError::InvalidMetadata)?;
+
+        // Read the header data that was signed
+        let header_data = self.read_signature_input()?;
+
+        // Verify
+        crypto::ecdsa_verify(keypair, &header_data, &signature.r, &signature.s)
+            .map_err(SceError::Io)
     }
 }

@@ -16,7 +16,7 @@ impl Bar {
         default_key: &[u8],
         signature_key: &[u8],
         big_endian: bool,
-    ) -> Result<Bar, JsValue> {
+    ) -> Result<Self, JsValue> {
         if default_key.len() != 32 || signature_key.len() != 32 {
             return Err(JsValue::from_str("Keys must be 32 bytes"));
         }
@@ -37,7 +37,7 @@ impl Bar {
         let reader = InnerBarReader::open(cursor, def, sig, endian)
             .map_err(|e| JsValue::from_str(&format!("Failed to open BAR: {}", e)))?;
 
-        Ok(Bar {
+        Ok(Self {
             inner: Some(reader),
         })
     }

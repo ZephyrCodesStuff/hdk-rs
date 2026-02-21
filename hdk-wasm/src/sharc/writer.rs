@@ -15,7 +15,7 @@ pub struct SharcWriter {
 impl SharcWriter {
     /// Create a new in-memory SHARC writer. `key` must be 32 bytes. `big_endian` selects endianness.
     #[wasm_bindgen(constructor)]
-    pub fn new(key: &[u8], big_endian: bool) -> Result<SharcWriter, JsValue> {
+    pub fn new(key: &[u8], big_endian: bool) -> Result<Self, JsValue> {
         if key.len() != 32 {
             return Err(JsValue::from_str("Key must be 32 bytes"));
         }
@@ -33,7 +33,7 @@ impl SharcWriter {
         let writer = InnerSharcWriter::new(cursor, key_arr, endian)
             .map_err(|e| JsValue::from_str(&format!("Failed to create writer: {}", e)))?;
 
-        Ok(SharcWriter {
+        Ok(Self {
             inner: Some(writer),
         })
     }

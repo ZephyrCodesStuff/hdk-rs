@@ -14,7 +14,7 @@ pub struct SdatWriter {
 #[wasm_bindgen]
 impl SdatWriter {
     #[wasm_bindgen(constructor)]
-    pub fn new(output_file_name: &str, keys: &[u8]) -> Result<SdatWriter, JsValue> {
+    pub fn new(output_file_name: &str, keys: &[u8]) -> Result<Self, JsValue> {
         if keys.len() != 16 * 7 {
             return Err(JsValue::from_str("keys must be 112 bytes (7*16)"));
         }
@@ -32,7 +32,7 @@ impl SdatWriter {
         let w = hdk_sdat::writer::SdatWriter::new(output_file_name, sdat_keys)
             .map_err(|e| JsValue::from_str(&format!("Failed to create writer: {}", e)))?;
 
-        Ok(SdatWriter { inner: Some(w) })
+        Ok(Self { inner: Some(w) })
     }
 
     /// Repack plaintext bytes into an SDAT container and return bytes as Uint8Array.

@@ -38,7 +38,7 @@ use std::{
 use hdk_secure::hash::AfsHash;
 
 /// Fast regex patterns always used for finding file paths in UTF-8 data.
-const FAST_PATTERNS: [&str; 4] = [
+pub const FAST_PATTERNS: [&str; 4] = [
     r#"(?:[\-\w\s]+\\)+[\-\w\s]+\.dds"#,
     r#"(?:file:\/+)*(?:(?:[\w-]+\/)+[\.\w-]+\.\w+)+"#,
     r#"\w+\.(?:ani|atmos|bar|bin|bnk|cdata|dds|efx|fnt|hkx|lua|luac|mdl|mp3|png|probe|scene|schema|skn|sharc|sho|sql|txt|xml|DDS)+"#,
@@ -46,7 +46,7 @@ const FAST_PATTERNS: [&str; 4] = [
 ];
 
 /// Slower regex patterns, only used when "full" mode is enabled.
-const SLOW_PATTERNS: [&str; 1] = [
+pub const SLOW_PATTERNS: [&str; 1] = [
     // Original vs simplified
 
     // r#"(?<=\b(?<=source="|file="|texture\s=\s"|spriteTexture\s=\s\"))[^"]*"#,
@@ -59,14 +59,14 @@ const SLOW_PATTERNS: [&str; 1] = [
 ];
 
 /// Common scene file extensions to help with mapping variations.
-const SCENE_EXTENSIONS: [&str; 25] = [
+pub const SCENE_EXTENSIONS: [&str; 25] = [
     "ani", "atmos", "atmosdev", "bar", "bin", "bnk", "cdata", "dds", "efx", "fnt", "hkx", "lua",
     "luac", "mdl", "mp3", "png", "probe", "scene", "schema", "skn", "sharc", "sho", "sql", "txt",
     "xml",
 ];
 
 /// Common files that most objects / scenes contain.
-const COMMON_FILES: [&str; 11] = [
+pub const COMMON_FILES: [&str; 11] = [
     "catalogueentry.xml",
     "localisation.xml",
     "resources.xml",
@@ -79,6 +79,139 @@ const COMMON_FILES: [&str; 11] = [
     "small.png",
     "files.txt",
 ];
+
+/// Get a map of common mappings that are generally available.
+///
+/// If a UUID is provided, it will also include UUID-prefixed versions of these common files.
+pub fn get_common_mappings(uuid: Option<&str>) -> HashMap<AfsHash, String> {
+    let mut hashes = HashMap::new();
+
+    for file_path in COMMON_FILES.iter() {
+        let s = file_path.to_string();
+        let hash = AfsHash::new_from_str(&s);
+
+        hashes.insert(hash, s);
+    }
+
+    if let Some(uuid) = uuid {
+        for file_path in COMMON_FILES.iter() {
+            let s = format!("Objects/{uuid}/{}", file_path);
+            let hash = AfsHash::new_from_str(&s);
+
+            hashes.insert(hash, s);
+        }
+    }
+
+    hashes
+}
+
+/// Scans the given content for potential file paths and generates a map of their hashes.
+///
+/// This function uses regex patterns to find strings that look like file paths,
+/// computes their [AfsHash] values, and returns a map from hash to original path string.
+///
+/// If a UUID is provided, it will also generate UUID-prefixed versions of found paths.
+///
+/// If `full` is enabled, additional (slower) regex patterns are used.
+pub fn scan_content_for_paths(
+    content: &[u8],
+    uuid: Option<&str>,
+    full: bool,
+) -> HashMap<AfsHash, String> {
+    let data_str = String::from_utf8_lossy(content);
+    let mut local_matches = HashMap::new();
+
+    // Always scan fast patterns, optionally scan slow patterns
+    let mut patterns = FAST_PATTERNS
+        .iter()
+        .map(|&x| x.to_string())
+        .collect::<Vec<String>>();
+
+    if full {
+        patterns.extend(SLOW_PATTERNS.iter().map(|&x| x.to_string()));
+    }
+
+    // Precompile regexes
+    let compiled_regexes: Vec<fancy_regex::Regex> = patterns
+        .iter()
+        .map(|pattern| {
+            fancy_regex::RegexBuilder::new(pattern)
+                .backtrack_limit(usize::MAX)
+                .build()
+                .unwrap()
+        })
+        .collect();
+
+    for regex in &compiled_regexes {
+        let matches: Vec<_> = regex.find_iter(&data_str).filter_map(|m| m.ok()).collect();
+
+        for m in matches {
+            // Start with the raw match string and try to extract the actual path
+            let mut raw = m.as_str().to_string();
+
+            // If the match contains quoted content, extract the part between the first and last quote
+            if raw.contains('"') {
+                if let (Some(s), Some(e)) = (raw.find('"'), raw.rfind('"'))
+                    && e > s
+                {
+                    raw = raw[s + 1..e].to_string();
+                }
+            } else {
+                // Remove common leading tokens like `source=` or `file=` and trim
+                raw = raw
+                    .trim()
+                    .trim_start_matches("source=")
+                    .trim_start_matches("file=")
+                    .trim()
+                    .to_string();
+            }
+
+            // Normalize slashes and lowercase (matches are compared against string-hashed entries)
+            let path_str = raw
+                .to_lowercase()
+                .replace("\\", "/")
+                .replace("file:///resource_root/build/", "")
+                .replace("file://resource_root/build/", "");
+
+            // Generate scene extension variants for the plain path (non-UUID)
+            if let Some(base) = SCENE_EXTENSIONS
+                .iter()
+                .find_map(|ext| path_str.strip_suffix(format!(".{ext}").as_str()))
+            {
+                for extension in SCENE_EXTENSIONS.iter() {
+                    let scene_val = format!("{base}.{extension}");
+                    let hashed_val = AfsHash::new_from_str(&scene_val);
+                    local_matches.insert(hashed_val, scene_val.clone());
+
+                    // Also insert UUID-prefixed variant so object-scoped hashes match
+                    if let Some(uuid) = uuid {
+                        let scene_uuid = format!("Objects/{uuid}/{scene_val}");
+                        let hashed_uuid = AfsHash::new_from_str(&scene_uuid);
+                        local_matches.insert(hashed_uuid, scene_uuid);
+                    }
+                }
+
+                // Also try _EXTRAS.SCENE
+                let extras_val = format!("{base}_extras.scene");
+                let hashed_extras = AfsHash::new_from_str(&extras_val);
+                local_matches.insert(hashed_extras, extras_val.clone());
+            }
+
+            // Insert the plain path
+            let hash_plain = AfsHash::new_from_str(&path_str);
+            local_matches.insert(hash_plain, path_str.clone());
+
+            // If mapping an object, also insert the UUID-prefixed path variant
+            if let Some(uuid) = uuid {
+                let uuid_path = format!("Objects/{uuid}/{path_str}");
+                let hash_uuid = AfsHash::new_from_str(&uuid_path);
+                local_matches.insert(hash_uuid, uuid_path);
+            }
+        }
+    }
+
+    local_matches
+}
 
 /// Result returned by `Mapper::run` containing summary information.
 pub struct MappingResult {
@@ -234,43 +367,12 @@ impl Mapper {
         // insert static hashes for files that do not get referenced (therefore can't be detected)
         // Use the same string-based normalization used for matches so hashing is consistent.
         {
-            for file_path in COMMON_FILES.iter() {
-                let s = file_path.to_string();
-                let hash = AfsHash::new_from_str(&s);
-
-                hashes.write().unwrap().insert(hash, PathBuf::from(s));
-            }
-
-            if let Some(uuid) = &uuid {
-                for file_path in COMMON_FILES.iter() {
-                    let s = format!("Objects/{uuid}/{}", file_path);
-                    let hash = AfsHash::new_from_str(&s);
-
-                    hashes.write().unwrap().insert(hash, PathBuf::from(s));
-                }
+            let common = get_common_mappings(uuid.as_deref());
+            let mut main_hashes = hashes.write().unwrap();
+            for (k, v) in common {
+                main_hashes.insert(k, PathBuf::from(v));
             }
         }
-
-        // Always scan fast patterns, optionally scan slow patterns
-        let mut patterns = FAST_PATTERNS
-            .iter()
-            .map(|&x| x.to_string())
-            .collect::<Vec<String>>();
-
-        if full {
-            patterns.extend(SLOW_PATTERNS.iter().map(|&x| x.to_string()));
-        }
-
-        // Precompile regexes for better performance
-        let compiled_regexes: Vec<fancy_regex::Regex> = patterns
-            .iter()
-            .map(|pattern| {
-                fancy_regex::RegexBuilder::new(pattern)
-                    .backtrack_limit(usize::MAX)
-                    .build()
-                    .unwrap()
-            })
-            .collect();
 
         // Use a shared map to accumulate found mappings
         let result_hashes: RwLock<_> = RwLock::new(HashMap::new());
@@ -281,77 +383,7 @@ impl Mapper {
                 Err(_) => continue,
             };
 
-            let data_str = String::from_utf8_lossy(&buf);
-
-            let mut local_matches = HashMap::new();
-
-            for regex in &compiled_regexes {
-                let matches: Vec<_> = regex.find_iter(&data_str).filter_map(|m| m.ok()).collect();
-
-                for m in matches {
-                    // Start with the raw match string and try to extract the actual path
-                    let mut raw = m.as_str().to_string();
-
-                    // If the match contains quoted content, extract the part between the first and last quote
-                    if raw.contains('"') {
-                        if let (Some(s), Some(e)) = (raw.find('"'), raw.rfind('"'))
-                            && e > s
-                        {
-                            raw = raw[s + 1..e].to_string();
-                        }
-                    } else {
-                        // Remove common leading tokens like `source=` or `file=` and trim
-                        raw = raw
-                            .trim()
-                            .trim_start_matches("source=")
-                            .trim_start_matches("file=")
-                            .trim()
-                            .to_string();
-                    }
-
-                    // Normalize slashes and lowercase (matches are compared against string-hashed entries)
-                    let path_str = raw
-                        .to_lowercase()
-                        .replace("\\", "/")
-                        .replace("file:///resource_root/build/", "")
-                        .replace("file://resource_root/build/", "");
-
-                    // Generate scene extension variants for the plain path (non-UUID)
-                    if let Some(base) = SCENE_EXTENSIONS
-                        .iter()
-                        .find_map(|ext| path_str.strip_suffix(format!(".{ext}").as_str()))
-                    {
-                        for extension in SCENE_EXTENSIONS.iter() {
-                            let scene_val = format!("{base}.{extension}");
-                            let hashed_val = AfsHash::new_from_str(&scene_val);
-                            local_matches.insert(hashed_val, scene_val.clone());
-
-                            // Also insert UUID-prefixed variant so object-scoped hashes match
-                            if let Some(uuid) = &uuid {
-                                let scene_uuid = format!("Objects/{uuid}/{scene_val}");
-                                let hashed_uuid = AfsHash::new_from_str(&scene_uuid);
-                                local_matches.insert(hashed_uuid, scene_uuid);
-                            }
-                        }
-
-                        // Also try _EXTRAS.SCENE
-                        let extras_val = format!("{base}_extras.scene");
-                        let hashed_extras = AfsHash::new_from_str(&extras_val);
-                        local_matches.insert(hashed_extras, extras_val.clone());
-                    }
-
-                    // Insert the plain path
-                    let hash_plain = AfsHash::new_from_str(&path_str);
-                    local_matches.insert(hash_plain, path_str.clone());
-
-                    // If mapping an object, also insert the UUID-prefixed path variant
-                    if let Some(uuid) = &uuid {
-                        let uuid_path = format!("Objects/{uuid}/{path_str}");
-                        let hash_uuid = AfsHash::new_from_str(&uuid_path);
-                        local_matches.insert(hash_uuid, uuid_path);
-                    }
-                }
-            }
+            let local_matches = scan_content_for_paths(&buf, uuid.as_deref(), full);
 
             {
                 let mut shared_hashes = result_hashes.write().unwrap();

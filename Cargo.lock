@@ -493,10 +493,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "wasi",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -506,9 +504,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -593,7 +593,7 @@ dependencies = [
 [[package]]
 name = "hdk-archive"
 version = "0.1.0"
-source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#1934872ca94f6c74e73d9025b7a3e3178ae0b8a1"
+source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#8d775be9492c07b86500aaf54edc439451bb8cc9"
 dependencies = [
  "aes",
  "binrw",
@@ -622,7 +622,7 @@ dependencies = [
 [[package]]
 name = "hdk-comp"
 version = "0.1.0"
-source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#1934872ca94f6c74e73d9025b7a3e3178ae0b8a1"
+source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#8d775be9492c07b86500aaf54edc439451bb8cc9"
 dependencies = [
  "byteorder",
  "flate2",
@@ -632,23 +632,6 @@ dependencies = [
 [[package]]
 name = "hdk-firmware"
 version = "0.1.0"
-dependencies = [
- "aes",
- "byteorder",
- "cbc",
- "crypto-bigint",
- "ctr",
- "elliptic-curve",
- "flate2",
- "p192",
- "sha1_smol",
- "thiserror",
-]
-
-[[package]]
-name = "hdk-firmware"
-version = "0.1.0"
-source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#1934872ca94f6c74e73d9025b7a3e3178ae0b8a1"
 dependencies = [
  "aes",
  "byteorder",
@@ -688,7 +671,7 @@ dependencies = [
 [[package]]
 name = "hdk-sdat"
 version = "0.1.0"
-source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#1934872ca94f6c74e73d9025b7a3e3178ae0b8a1"
+source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#8d775be9492c07b86500aaf54edc439451bb8cc9"
 dependencies = [
  "aes",
  "binrw",
@@ -716,7 +699,7 @@ dependencies = [
 [[package]]
 name = "hdk-secure"
 version = "0.1.0"
-source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#1934872ca94f6c74e73d9025b7a3e3178ae0b8a1"
+source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#8d775be9492c07b86500aaf54edc439451bb8cc9"
 dependencies = [
  "byteorder",
  "cbc",
@@ -736,15 +719,15 @@ dependencies = [
  "cipher",
  "ctr",
  "generic-array",
- "getrandom 0.2.17",
+ "getrandom 0.3.4",
  "hdk-archive 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
  "hdk-comp 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
- "hdk-firmware 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
  "hdk-sdat 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
  "hdk-secure 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
+ "uuid",
  "wasm-bindgen",
 ]
 
@@ -1116,9 +1099,9 @@ dependencies = [
 
 [[package]]
 name = "serde-wasm-bindgen"
-version = "0.4.5"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3b4c031cd0d9014307d82b8abf653c0290fbdaeb4c02d00c63cf52f728628bf"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
 dependencies = [
  "js-sys",
  "serde",

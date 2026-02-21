@@ -13,7 +13,7 @@ use serde_wasm_bindgen as swb;
 impl Sharc {
     /// Create a SHARC reader from raw bytes and a 32-byte key.
     #[wasm_bindgen(constructor)]
-    pub fn new(buf: &[u8], key: &[u8]) -> Result<Sharc, JsValue> {
+    pub fn new(buf: &[u8], key: &[u8]) -> Result<Self, JsValue> {
         if key.len() != 32 {
             return Err(JsValue::from_str("Key must be 32 bytes"));
         }
@@ -25,7 +25,7 @@ impl Sharc {
         let reader = InnerSharcReader::open(cursor, key_arr)
             .map_err(|e| JsValue::from_str(&format!("Failed to open SHARC: {}", e)))?;
 
-        Ok(Sharc {
+        Ok(Self {
             inner: Some(reader),
         })
     }

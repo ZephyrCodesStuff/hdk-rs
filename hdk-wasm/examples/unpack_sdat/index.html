@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>HDK WASM — Unpack SDAT</title>
+  </head>
+  <body>
+    <h1>HDK WASM — Unpack SDAT</h1>
+    <p>
+      Select an SDAT file and provide the 112-byte key blob (7 keys, 16 bytes
+      each) as hex.
+    </p>
+
+    <input id="file" type="file" accept=".sdat,.bin" />
+    <br />
+    <label for="keys">Keys (hex, 224 chars = 112 bytes):</label>
+    <br />
+    <textarea id="keys" rows="4" cols="80" placeholder="0123..."></textarea>
+    <br />
+    <label for="chunk">Chunk size (bytes):</label>
+    <input id="chunk" type="number" value="65536" />
+    <br />
+    <button id="unpack">Unpack</button>
+
+    <h2>Log</h2>
+    <pre id="log"></pre>
+
+    <script type="module" src="./unpack.js"></script>
+  </body>
+</html>

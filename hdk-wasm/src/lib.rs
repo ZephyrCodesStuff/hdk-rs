@@ -4,6 +4,7 @@
 
 pub mod bar;
 pub mod comp;
+pub mod mapper;
 pub mod sdat;
 pub mod secure;
 pub mod sharc;

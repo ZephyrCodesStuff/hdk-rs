@@ -15,7 +15,7 @@ pub struct BarWriter {
 #[wasm_bindgen]
 impl BarWriter {
     #[wasm_bindgen(constructor)]
-    pub fn new(default_key: &[u8], signature_key: &[u8]) -> Result<BarWriter, JsValue> {
+    pub fn new(default_key: &[u8], signature_key: &[u8]) -> Result<Self, JsValue> {
         if default_key.len() != 32 || signature_key.len() != 32 {
             return Err(JsValue::from_str("Keys must be 32 bytes"));
         }
@@ -27,7 +27,7 @@ impl BarWriter {
         let cursor = Cursor::new(Vec::new());
         let writer = InnerBarWriter::new(cursor, def, sig)
             .map_err(|e| JsValue::from_str(&format!("Failed to create writer: {}", e)))?;
-        Ok(BarWriter {
+        Ok(Self {
             inner: Some(writer),
         })
     }

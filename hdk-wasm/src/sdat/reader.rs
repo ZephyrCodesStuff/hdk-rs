@@ -19,7 +19,7 @@ impl Sdat {
     /// following order: sdat_key, edat_key_0, edat_key_1, edat_hash_0,
     /// edat_hash_1, npdrm_omac_key_2, npdrm_omac_key_3.
     #[wasm_bindgen(constructor)]
-    pub fn new(buf: &[u8], keys: &[u8]) -> Result<Sdat, JsValue> {
+    pub fn new(buf: &[u8], keys: &[u8]) -> Result<Self, JsValue> {
         if keys.len() != 16 * 7 {
             return Err(JsValue::from_str("keys must be 112 bytes (7*16)"));
         }
@@ -39,7 +39,7 @@ impl Sdat {
         let reader = InnerSdatReader::open(cursor, &sdat_keys)
             .map_err(|e| JsValue::from_str(&format!("Failed to open SDAT: {}", e)))?;
 
-        Ok(Sdat {
+        Ok(Self {
             inner: Some(reader),
         })
     }

@@ -31,7 +31,7 @@ pub struct BarEntryMetadata {
     pub compressed_size: u32,
 }
 
-pub(crate) fn header_from_raw(h: RawHeader) -> BarHeader {
+pub(crate) const fn header_from_raw(h: RawHeader) -> BarHeader {
     BarHeader {
         version: h.version_and_flags.0,
         flags: h.version_and_flags.1,

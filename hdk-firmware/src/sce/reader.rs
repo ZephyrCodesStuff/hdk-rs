@@ -150,12 +150,12 @@ impl<R: Read + Seek> SceArchive<R> {
     }
 
     /// Get the signature if metadata has been loaded
-    pub fn signature(&self) -> Option<&SCESignature> {
+    pub const fn signature(&self) -> Option<&SCESignature> {
         self.signature.as_ref()
     }
 
     /// Get the offset where the signature is located in the file
-    pub fn signature_offset(&self) -> Option<u64> {
+    pub const fn signature_offset(&self) -> Option<u64> {
         self.signature_offset
     }
 

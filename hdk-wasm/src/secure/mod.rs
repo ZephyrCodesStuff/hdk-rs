@@ -1,4 +1,4 @@
-use hdk_secure::modes::{BlowfishPS3, XteaPS3};
+use hdk_secure::modes::{BlowfishEcbDec, BlowfishPS3, XteaPS3};
 use wasm_bindgen::prelude::*;
 
 use cipher::{KeyIvInit, KeySizeUser, StreamCipher};
@@ -55,4 +55,47 @@ pub fn cipher_ctr_apply(
             Ok(out)
         }
     }
+}
+
+/// Recover the Blowfish-CTR IV from the ciphertext using a known-plaintext block.
+///
+/// Expects `known_plaintext` to be at least 8 bytes long. Returns the 8-byte IV.
+#[wasm_bindgen]
+pub fn blowfish_recover_iv(
+    key: &[u8],
+    ciphertext: &[u8],
+    known_plaintext: &[u8],
+) -> Result<Vec<u8>, JsValue> {
+    if ciphertext.len() < 8 {
+        return Err(JsValue::from_str("Ciphertext too short for IV recovery"));
+    }
+    if known_plaintext.len() < 8 {
+        return Err(JsValue::from_str(
+            "Known plaintext must be at least 8 bytes",
+        ));
+    }
+    if key.len() != BlowfishPS3::key_size() {
+        return Err(JsValue::from_str(&format!(
+            "Blowfish key must be {} bytes",
+            BlowfishPS3::key_size()
+        )));
+    }
+
+    // Step 1: XOR known plaintext against the first ciphertext block → ECB(IV)
+    let mut ecb_iv = [0u8; 8];
+    for i in 0..8 {
+        ecb_iv[i] = known_plaintext[i] ^ ciphertext[i];
+    }
+
+    // Step 2: ECB-decrypt the block to get the raw IV.
+    use ctr::cipher::{BlockDecryptMut, KeyInit, block_padding::NoPadding};
+    let ecb_cipher = BlowfishEcbDec::new_from_slice(key)
+        .map_err(|e| JsValue::from_str(&format!("Failed to create ECB cipher: {e}")))?;
+
+    let mut block = ecb_iv;
+    ecb_cipher
+        .decrypt_padded_mut::<NoPadding>(&mut block)
+        .map_err(|e| JsValue::from_str(&format!("ECB decrypt failed: {e}")))?;
+
+    Ok(block.to_vec())
 }

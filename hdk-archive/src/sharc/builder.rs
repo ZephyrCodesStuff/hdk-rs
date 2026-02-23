@@ -1,6 +1,6 @@
 use std::io::{Seek, Write};
 
-use binrw::BinWrite;
+use binrw::{BinWrite, Endian};
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use flate2::write::ZlibEncoder;
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
@@ -107,7 +107,11 @@ impl SharcBuilder {
     }
 
     /// Build the archive and write it to the given writer.
-    pub fn build<W: Write + Seek>(&self, writer: &mut W) -> std::io::Result<()> {
+    pub fn build<W: Write + Seek>(
+        &mut self,
+        writer: &mut W,
+        endian: Endian,
+    ) -> std::io::Result<()> {
         if self.entries.is_empty() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -115,12 +119,16 @@ impl SharcBuilder {
             ));
         }
 
+        // Sort entries decreasing by name hash to match expected order in SHARC files
+        self.entries
+            .sort_by_key(|e| std::cmp::Reverse(e.name_hash.0));
+
         // Generate random IV for archive metadata
         let mut archive_iv = [0u8; 16];
         let mut rng = rand::rng();
         rng.fill(&mut archive_iv);
 
-        // Calculate offsets for all entries
+        // Calculate offsets for all entries (aligned to 4 bytes)
         let mut entry_offsets = Vec::new();
         let mut current_offset = 0u32;
 
@@ -129,7 +137,9 @@ impl SharcBuilder {
                 Self::compress_entry(&entry.data, entry.compression, &self.files_key, &entry.iv)?;
 
             entry_offsets.push((current_offset, compressed.len() as u32));
-            current_offset = current_offset.wrapping_add(compressed.len() as u32);
+
+            // Align next offset to 4-byte boundary
+            current_offset = (current_offset + compressed.len() as u32 + 3) & !3;
         }
 
         // Build archive structure
@@ -159,16 +169,24 @@ impl SharcBuilder {
                 .collect(),
         };
 
-        // Write archive (binrw handles encryption via map_stream)
-        archive
-            .write_le_args(writer, (self.archive_key,))
-            .map_err(|e| std::io::Error::other(format!("Failed to write archive: {e}")))?;
+        // Write archive metadata and entry table
+        match endian {
+            Endian::Little => archive.write_le_args(writer, (self.archive_key,)),
+            Endian::Big => archive.write_be_args(writer, (self.archive_key,)),
+        }
+        .map_err(|e| std::io::Error::other(format!("Failed to write archive: {e}")))?;
 
-        // Write compressed file data
+        // Write compressed file data with 4-byte alignment padding
         for entry in &self.entries {
             let compressed =
                 Self::compress_entry(&entry.data, entry.compression, &self.files_key, &entry.iv)?;
             writer.write_all(&compressed)?;
+
+            // Write padding to align to next 4-byte boundary
+            let padding_needed = (4 - (compressed.len() % 4)) % 4;
+            if padding_needed > 0 {
+                writer.write_all(&vec![0u8; padding_needed])?;
+            }
         }
 
         Ok(())

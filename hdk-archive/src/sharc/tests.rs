@@ -62,7 +62,9 @@ fn roundtrip() {
         builder.add_entry(hdk_secure::hash::AfsHash(name_hash), data, compression, iv);
     }
 
-    builder.build(&mut writer).expect("Failed to build archive");
+    builder
+        .build(&mut writer, binrw::Endian::Little)
+        .expect("Failed to build archive");
 
     let data = writer.into_inner();
     // let data_len = data.len() as u32;

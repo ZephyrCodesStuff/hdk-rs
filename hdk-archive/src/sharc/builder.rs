@@ -163,7 +163,7 @@ impl SharcBuilder {
         let archive = SharcArchive {
             archive_info: SharcArchiveMeta {
                 version: 512,
-                flags: self.flags.into(),
+                flags: self.flags.0.bits(),
             },
             iv: archive_iv,
             archive_data: SharcArchiveData {

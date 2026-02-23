@@ -1,6 +1,6 @@
 use std::{io::{BufReader, Read, Seek, SeekFrom}};
 
-use binrw::{BinRead, BinWrite, binrw};
+use binrw::binrw;
 use ctr::cipher::{KeyIvInit};
 use flate2::{read::ZlibDecoder};
 use hdk_comp::zlib::{reader::SegmentedZlibReader};
@@ -8,7 +8,7 @@ use hdk_secure::{hash::AfsHash, modes::XteaPS3, reader::CryptoReader};
 use num_enum::TryFromPrimitive;
 
 use super::cryptor::SharcCryptor;
-use crate::structs::CompressionType;
+use crate::structs::{ArchiveVersion, CompressionType};
 
 #[binrw]
 #[brw(magic = 0xADEF17E1u32)] // For LE this will expect 0xE117EFAD, but binrw will handle that for us based on endianness
@@ -47,14 +47,15 @@ pub struct SharcArchive {
     pub entries: Vec<SharcEntry>,
 }
 
-#[derive(BinRead, BinWrite, Copy, Clone, Debug)]
+#[binrw]
+#[derive(Copy, Clone, Debug)]
 #[br(map = |x: u32| SharcArchiveMeta { 
     version: (x >> 16) as u16, 
     flags: (x & 0xFFFF) as u16 
 })]
 #[bw(map = |x: &SharcArchiveMeta| ((x.version as u32) << 16) | (x.flags as u32))]
 pub struct SharcArchiveMeta {
-    #[br(assert(*version == 512, "Unsupported SHARC version"))]
+    #[br(assert(*version == ArchiveVersion::SHARC.into(), "Unsupported SHARC version"))]
     pub version: u16, // Upper 16 bits
     pub flags: u16,   // Lower 16 bits
 }

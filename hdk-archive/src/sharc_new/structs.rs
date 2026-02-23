@@ -2,16 +2,17 @@ use std::{io::{BufReader, Read, Seek, SeekFrom}};
 
 use binrw::{BinRead, BinWrite, binrw};
 use ctr::cipher::{KeyIvInit};
-use flate2::bufread::ZlibDecoder;
-use hdk_comp::zlib::reader::SegmentedZlibReader;
+use flate2::{read::ZlibDecoder};
+use hdk_comp::zlib::{reader::SegmentedZlibReader};
 use hdk_secure::{modes::XteaPS3, reader::CryptoReader};
 use num_enum::TryFromPrimitive;
 
 use crate::{sharc_new::cryptor::SharcCryptor, structs::CompressionType};
 
 #[binrw]
-#[br(magic = 0xADEF17E1u32)] // For LE this will expect 0xE117EFAD, but binrw will handle that for us based on endianness
+#[brw(magic = 0xADEF17E1u32)] // For LE this will expect 0xE117EFAD, but binrw will handle that for us based on endianness
 #[br(import(archive_key: [u8; 32], archive_size: u32))]
+#[bw(import(archive_key: [u8; 32]))]
 #[derive(Debug)]
 pub struct SharcArchive {
     // Magic is 4 bytes and is either ADEF17E1 for BE or E117EFAD for LE
@@ -23,6 +24,7 @@ pub struct SharcArchive {
     pub iv: [u8; 16],
 
     #[br(map_stream = |r| SharcCryptor::new(r, &archive_key, &iv))]
+    #[bw(map_stream = |w| SharcCryptor::new(w, &archive_key, iv))]
     pub archive_data: SharcArchiveData,
 
     #[br(count = archive_data.file_count)]
@@ -31,6 +33,12 @@ pub struct SharcArchive {
         let next_iv = current_iv.wrapping_add(1).to_be_bytes();
 
         SharcCryptor::new(r, &archive_key, &next_iv)
+    })]
+    #[bw(map_stream = |w| {
+        let current_iv = u128::from_be_bytes(*iv);
+        let next_iv = current_iv.wrapping_add(1).to_be_bytes();
+
+        SharcCryptor::new(w, &archive_key, &next_iv)
     })]
     #[br(args { 
         inner: (archive_size, 52 + (archive_data.file_count as u64 * 24))
@@ -97,7 +105,7 @@ pub struct SharcEntry {
             Ok((offset, comp_enum))
         }
     })]
-    #[bw(map = |(off, comp)| *off | (*comp as u32 & 0x3))]
+    #[bw(map = |(off, comp): &(u32, CompressionType)| *off | (*comp as u32 & 0x3))]
     pub location: (u32, CompressionType),
 
     pub uncompressed_size: u32,

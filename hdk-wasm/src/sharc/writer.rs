@@ -1,37 +1,38 @@
+use binrw::Endian;
 use js_sys::Uint8Array;
-use std::io::Cursor;
 use wasm_bindgen::prelude::*;
 
-use hdk_archive::sharc::writer::SharcWriter as InnerSharcWriter;
-use hdk_archive::structs::{CompressionType, Endianness};
+use hdk_archive::sharc::builder::SharcBuilder;
+use hdk_archive::structs::CompressionType;
 use hdk_secure::hash::AfsHash;
 
 #[wasm_bindgen]
 pub struct SharcWriter {
-    inner: Option<InnerSharcWriter<Cursor<Vec<u8>>>>,
+    inner: Option<SharcBuilder>,
 }
 
 #[wasm_bindgen]
 impl SharcWriter {
     /// Create a new in-memory SHARC writer. `key` must be 32 bytes. `big_endian` selects endianness.
     #[wasm_bindgen(constructor)]
-    pub fn new(key: &[u8], big_endian: bool) -> Result<Self, JsValue> {
+    pub fn new(key: &[u8], files_key: &[u8]) -> Result<Self, JsValue> {
         if key.len() != 32 {
             return Err(JsValue::from_str("Key must be 32 bytes"));
         }
 
-        let mut key_arr = [0u8; 32];
-        key_arr.copy_from_slice(&key[..32]);
+        if files_key.len() != 16 {
+            return Err(JsValue::from_str("Files key must be 16 bytes"));
+        }
 
-        let endian = if big_endian {
-            Endianness::Big
-        } else {
-            Endianness::Little
-        };
+        let key_arr: [u8; 32] = key
+            .try_into()
+            .map_err(|_| JsValue::from_str("Failed to convert key to array"))?;
 
-        let cursor = Cursor::new(Vec::new());
-        let writer = InnerSharcWriter::new(cursor, key_arr, endian)
-            .map_err(|e| JsValue::from_str(&format!("Failed to create writer: {}", e)))?;
+        let files_key_arr: [u8; 16] = files_key
+            .try_into()
+            .map_err(|_| JsValue::from_str("Failed to convert files key to array"))?;
+
+        let writer = SharcBuilder::new(key_arr, files_key_arr);
 
         Ok(Self {
             inner: Some(writer),
@@ -44,7 +45,12 @@ impl SharcWriter {
         name_hash: u32,
         compression_raw: u8,
         data: &[u8],
+        iv: &[u8],
     ) -> Result<(), JsValue> {
+        if iv.len() != 8 {
+            return Err(JsValue::from_str("IV must be 8 bytes"));
+        }
+
         let w = self
             .inner
             .as_mut()
@@ -52,26 +58,39 @@ impl SharcWriter {
 
         let comp = CompressionType::try_from(compression_raw)
             .map_err(|_| JsValue::from_str("Invalid compression type"))?;
-        let ah = AfsHash(name_hash as i32);
+        let afs_hash = AfsHash(name_hash as i32);
 
-        w.add_entry_from_bytes(ah, comp, data)
-            .map_err(|e| JsValue::from_str(&format!("add entry failed: {}", e)))
+        let iv_arr: [u8; 8] = iv
+            .try_into()
+            .map_err(|_| JsValue::from_str("Failed to convert IV to array"))?;
+
+        w.add_entry(afs_hash, data.to_vec(), comp, iv_arr);
+
+        Ok(())
     }
 
     /// Finalize and return the archive bytes as a `Uint8Array`.
-    pub fn finish(mut self) -> Result<Uint8Array, JsValue> {
-        let writer = self
+    pub fn finish(&mut self, big_endian: bool) -> Result<Uint8Array, JsValue> {
+        let mut writer = self
             .inner
             .take()
             .ok_or_else(|| JsValue::from_str("Writer closed"))?;
 
-        let out_cursor = writer
-            .finish()
-            .map_err(|e| JsValue::from_str(&format!("finish failed: {}", e)))?;
-        let vec = out_cursor.into_inner();
+        let endian = if big_endian {
+            Endian::Big
+        } else {
+            Endian::Little
+        };
 
-        let arr = Uint8Array::new_with_length(vec.len() as u32);
-        arr.copy_from(&vec[..]);
+        let mut buf = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut buf);
+
+        writer
+            .build(&mut cursor, endian)
+            .map_err(|e| JsValue::from_str(&format!("Failed to build archive: {e}")))?;
+
+        let arr = Uint8Array::new_with_length(buf.len() as u32);
+        arr.copy_from(&buf[..]);
         Ok(arr)
     }
 

@@ -56,16 +56,10 @@ pub enum ArchiveFlagsValue {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ArchiveFlags(BitFlags<ArchiveFlagsValue>);
+pub struct ArchiveFlags(pub BitFlags<ArchiveFlagsValue>);
 impl From<u16> for ArchiveFlags {
     fn from(flags: u16) -> Self {
         Self(BitFlags::from_bits_truncate(flags))
-    }
-}
-
-impl From<ArchiveFlags> for u16 {
-    fn from(flags: ArchiveFlags) -> Self {
-        flags.0.bits()
     }
 }
 

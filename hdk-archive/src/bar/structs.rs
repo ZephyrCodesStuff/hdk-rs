@@ -93,6 +93,7 @@ pub struct BarEntry {
 
     // IV must be calculated for BAR entries.
     #[br(calc = super::forge_iv(num_files as u64, uncompressed_size as u64, compressed_size as u64, location.0 as u64, timestamp))]
+    #[bw(ignore)]
     pub iv: [u8; 8],
 }
 

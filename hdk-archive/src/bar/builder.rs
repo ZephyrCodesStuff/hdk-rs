@@ -7,7 +7,7 @@ use hdk_comp::zlib::writer::SegmentedZlibWriter;
 use hdk_secure::{hash::AfsHash, modes::BlowfishPS3, writer::CryptoWriter};
 
 use super::structs::{BarArchive, BarArchiveData, BarArchiveMeta, BarEntry};
-use crate::structs::{ArchiveVersion, CompressionType};
+use crate::structs::{ArchiveFlags, ArchiveVersion, CompressionType};
 
 /// Builder for creating BAR archives.
 ///
@@ -19,7 +19,7 @@ pub struct BarBuilder {
     entries: Vec<BarBuilderEntry>,
     priority: i32,
     timestamp: i32,
-    flags: u16,
+    flags: ArchiveFlags,
 }
 
 struct BarBuilderEntry {
@@ -45,7 +45,7 @@ impl BarBuilder {
             entries: Vec::new(),
             priority: 0,
             timestamp: 0,
-            flags: 0,
+            flags: ArchiveFlags::default(),
         }
     }
 
@@ -62,7 +62,7 @@ impl BarBuilder {
     }
 
     /// Set archive flags.
-    pub fn with_flags(mut self, flags: u16) -> Self {
+    pub fn with_flags(mut self, flags: ArchiveFlags) -> Self {
         self.flags = flags;
         self
     }
@@ -150,7 +150,7 @@ impl BarBuilder {
                 head.extend_from_slice(&[0u8; 4]);
                 head.extend_from_slice(&checksum);
 
-                // Encrypt head with signature_key
+                // Encrypt head with signature key
                 let mut head_enc = Vec::new();
                 let mut head_writer = CryptoWriter::new(
                     &mut head_enc,
@@ -167,7 +167,7 @@ impl BarBuilder {
                 let mut body_enc = Vec::new();
                 let mut body_writer = CryptoWriter::new(
                     &mut body_enc,
-                    BlowfishPS3::new(&self.signature_key.into(), &iv_body.into()),
+                    BlowfishPS3::new(&self.archive_key.into(), &iv_body.into()),
                 );
                 body_writer.write_all(compressed)?;
                 drop(body_writer);
@@ -187,7 +187,7 @@ impl BarBuilder {
         let archive = BarArchive {
             archive_info: BarArchiveMeta {
                 version: ArchiveVersion::BAR.into(),
-                flags: self.flags,
+                flags: self.flags.0.bits(),
             },
             archive_data: BarArchiveData {
                 priority: self.priority,

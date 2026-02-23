@@ -8,7 +8,7 @@ use hdk_secure::{hash::AfsHash, modes::XteaPS3};
 use rand::Rng;
 
 use super::structs::{SharcArchive, SharcArchiveData, SharcArchiveMeta, SharcEntry};
-use crate::structs::CompressionType;
+use crate::structs::{ArchiveFlags, CompressionType};
 
 // Builder for creating SHARC archives.
 ///
@@ -20,6 +20,7 @@ pub struct SharcBuilder {
     entries: Vec<SharcBuilderEntry>,
     priority: i32,
     timestamp: i32,
+    flags: ArchiveFlags,
 }
 
 struct SharcBuilderEntry {
@@ -38,6 +39,7 @@ impl SharcBuilder {
             entries: Vec::new(),
             priority: 0,
             timestamp: 0,
+            flags: ArchiveFlags::default(),
         }
     }
 
@@ -50,6 +52,12 @@ impl SharcBuilder {
     /// Set archive timestamp.
     pub fn with_timestamp(mut self, timestamp: i32) -> Self {
         self.timestamp = timestamp;
+        self
+    }
+
+    /// Set archive flags.
+    pub fn with_flags(mut self, flags: ArchiveFlags) -> Self {
+        self.flags = flags;
         self
     }
 
@@ -92,8 +100,8 @@ impl SharcBuilder {
             }
 
             CompressionType::Encrypted => {
-                // Compress first
-                let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+                // Compress first with SegmentedZlib (matching the reader's decompression)
+                let mut encoder = SegmentedZlibWriter::new(Vec::new());
                 encoder.write_all(data)?;
                 let compressed = encoder.finish()?;
 
@@ -101,6 +109,7 @@ impl SharcBuilder {
                 let mut encrypted = compressed.clone();
                 let mut cipher = XteaPS3::new(key.into(), iv.into());
                 cipher.apply_keystream(&mut encrypted);
+
                 Ok(encrypted)
             }
         }
@@ -131,22 +140,30 @@ impl SharcBuilder {
         // Calculate offsets for all entries (aligned to 4 bytes)
         let mut entry_offsets = Vec::new();
         let mut current_offset = 0u32;
+        let compressed: Vec<Vec<u8>> = self
+            .entries
+            .iter()
+            .map(|entry| {
+                let data = Self::compress_entry(
+                    &entry.data,
+                    entry.compression,
+                    &self.files_key,
+                    &entry.iv,
+                )
+                .expect("Failed to compress entry");
 
-        for entry in &self.entries {
-            let compressed =
-                Self::compress_entry(&entry.data, entry.compression, &self.files_key, &entry.iv)?;
+                entry_offsets.push((current_offset, data.len() as u32));
+                current_offset = (current_offset + data.len() as u32 + 3) & !3; // Align to next 4-byte boundary
 
-            entry_offsets.push((current_offset, compressed.len() as u32));
-
-            // Align next offset to 4-byte boundary
-            current_offset = (current_offset + compressed.len() as u32 + 3) & !3;
-        }
+                data
+            })
+            .collect();
 
         // Build archive structure
         let archive = SharcArchive {
             archive_info: SharcArchiveMeta {
                 version: 512,
-                flags: 0,
+                flags: self.flags.into(),
             },
             iv: archive_iv,
             archive_data: SharcArchiveData {
@@ -177,13 +194,11 @@ impl SharcBuilder {
         .map_err(|e| std::io::Error::other(format!("Failed to write archive: {e}")))?;
 
         // Write compressed file data with 4-byte alignment padding
-        for entry in &self.entries {
-            let compressed =
-                Self::compress_entry(&entry.data, entry.compression, &self.files_key, &entry.iv)?;
-            writer.write_all(&compressed)?;
+        for entry in compressed {
+            writer.write_all(&entry)?;
 
             // Write padding to align to next 4-byte boundary
-            let padding_needed = (4 - (compressed.len() % 4)) % 4;
+            let padding_needed = (4 - (entry.len() % 4)) % 4;
             if padding_needed > 0 {
                 writer.write_all(&vec![0u8; padding_needed])?;
             }

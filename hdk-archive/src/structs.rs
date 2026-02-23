@@ -63,6 +63,18 @@ impl From<u16> for ArchiveFlags {
     }
 }
 
+impl From<ArchiveFlags> for u16 {
+    fn from(flags: ArchiveFlags) -> Self {
+        flags.0.bits()
+    }
+}
+
+impl Default for ArchiveFlags {
+    fn default() -> Self {
+        Self(BitFlags::empty())
+    }
+}
+
 impl BinRead for ArchiveFlags {
     type Args<'a> = ();
 

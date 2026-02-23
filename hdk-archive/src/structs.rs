@@ -1,4 +1,5 @@
 use binrw::{BinRead, Endian};
+use enumflags2::{BitFlags, bitflags};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 pub const ARCHIVE_MAGIC: u32 = 0xADEF17E1;
@@ -14,6 +15,15 @@ impl From<Endianness> for Endian {
         match endianness {
             Endianness::Little => Self::Little,
             Endianness::Big => Self::Big,
+        }
+    }
+}
+
+impl From<Endian> for Endianness {
+    fn from(endian: Endian) -> Self {
+        match endian {
+            Endian::Little => Self::Little,
+            Endian::Big => Self::Big,
         }
     }
 }
@@ -36,13 +46,38 @@ pub enum ArchiveVersion {
     Unknown = 0xFFFF,
 }
 
-use enumflags2::bitflags;
-
 #[bitflags]
 #[repr(u16)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ArchiveFlags {
+pub enum ArchiveFlagsValue {
     ZTOC = 0b0001,
     LeanZLib = 0b0010,
     Protected = 0b1000,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArchiveFlags(pub BitFlags<ArchiveFlagsValue>);
+impl From<u16> for ArchiveFlags {
+    fn from(flags: u16) -> Self {
+        Self(BitFlags::from_bits_truncate(flags))
+    }
+}
+
+impl Default for ArchiveFlags {
+    fn default() -> Self {
+        Self(BitFlags::empty())
+    }
+}
+
+impl BinRead for ArchiveFlags {
+    type Args<'a> = ();
+
+    fn read_options<R: std::io::Read + std::io::Seek>(
+        reader: &mut R,
+        endian: Endian,
+        _: Self::Args<'_>,
+    ) -> binrw::BinResult<Self> {
+        let raw = u16::read_options(reader, endian, ())?;
+        Ok(raw.into())
+    }
 }

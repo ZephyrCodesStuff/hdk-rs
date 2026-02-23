@@ -581,8 +581,8 @@ dependencies = [
  "enumflags2",
  "fancy-regex",
  "flate2",
- "hdk-comp 0.1.0",
- "hdk-secure 0.1.0",
+ "hdk-comp",
+ "hdk-secure",
  "num_enum",
  "rand",
  "sha1",
@@ -591,38 +591,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "hdk-archive"
-version = "0.1.0"
-source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#a602a8b1036ee37296b47094dd812cbf7fada72d"
-dependencies = [
- "aes",
- "binrw",
- "byteorder",
- "ctr",
- "enumflags2",
- "fancy-regex",
- "flate2",
- "hdk-comp 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
- "hdk-secure 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
- "num_enum",
- "rand",
- "sha1_smol",
- "walkdir",
-]
-
-[[package]]
 name = "hdk-comp"
 version = "0.1.0"
-dependencies = [
- "byteorder",
- "flate2",
- "lzma-rust2",
-]
-
-[[package]]
-name = "hdk-comp"
-version = "0.1.0"
-source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#a602a8b1036ee37296b47094dd812cbf7fada72d"
 dependencies = [
  "byteorder",
  "flate2",
@@ -669,38 +639,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "hdk-sdat"
+name = "hdk-secure"
 version = "0.1.0"
-source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#a602a8b1036ee37296b47094dd812cbf7fada72d"
 dependencies = [
- "aes",
  "binrw",
- "derive_builder",
- "enumflags2",
- "sha1_smol",
- "thiserror",
-]
-
-[[package]]
-name = "hdk-secure"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "cbc",
- "cipher",
- "crc16",
- "ctr",
- "ecb",
- "hex",
- "rand",
- "uuid",
-]
-
-[[package]]
-name = "hdk-secure"
-version = "0.1.0"
-source = "git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main#a602a8b1036ee37296b47094dd812cbf7fada72d"
-dependencies = [
  "byteorder",
  "cbc",
  "cipher",
@@ -716,14 +658,15 @@ dependencies = [
 name = "hdk-wasm"
 version = "0.1.0"
 dependencies = [
+ "binrw",
  "cipher",
  "ctr",
  "generic-array",
  "getrandom 0.3.4",
- "hdk-archive 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
- "hdk-comp 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
- "hdk-sdat 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
- "hdk-secure 0.1.0 (git+https://github.com/ZephyrCodesStuff/hdk-rs?branch=main)",
+ "hdk-archive",
+ "hdk-comp",
+ "hdk-sdat",
+ "hdk-secure",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",

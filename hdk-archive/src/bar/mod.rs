@@ -1,13 +1,6 @@
-pub use reader::BarReader;
-pub use structs::{BarEntry, BarEntryMetadata, BarHeader};
-pub use writer::BarWriter;
-
-pub mod reader;
+pub mod builder;
 pub mod structs;
-pub mod writer;
-
-#[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// Forge an IV for BAR encryption based on the given parameters
 pub const fn forge_iv(

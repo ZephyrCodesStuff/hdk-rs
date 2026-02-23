@@ -7,10 +7,10 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-hdk-archive = { git = "https://github.com/ZephyrCodesStuff/hdk-rs", branch = "main" }
-hdk-sdat = { git = "https://github.com/ZephyrCodesStuff/hdk-rs", branch = "main" }
-hdk-secure = { git = "https://github.com/ZephyrCodesStuff/hdk-rs", branch = "main" }
-hdk-comp = { git = "https://github.com/ZephyrCodesStuff/hdk-rs", branch = "main" }
+hdk-archive = { path = "../hdk-archive" }
+hdk-sdat = { path = "../hdk-sdat" }
+hdk-comp = { path = "../hdk-comp" }
+hdk-secure = { path = "../hdk-secure" }
 
 wasm-bindgen = "0.2.110"
 js-sys = "0.3.87"
@@ -23,6 +23,7 @@ uuid = { version = "1.21.0", features = ["v4", "js"] }
 ctr = "0.9"
 generic-array = "0.14"
 cipher = "0.4"
+binrw = { version = "0.15.0", default-features = false }
 
 [profile.release]
 opt-level = "z"

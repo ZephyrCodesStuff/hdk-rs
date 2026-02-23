@@ -1,16 +1,20 @@
-use wasm_bindgen::prelude::*;
-
 use std::io::Cursor;
 
-use hdk_archive::bar::reader::BarReader as InnerBarReader;
-use hdk_archive::bar::structs::{BarEntryMetadata as RawEntryMeta, BarHeader as RawHeader};
-
 use serde::Serialize;
+use wasm_bindgen::prelude::*;
+
+use hdk_archive::bar::structs::{BarArchive as RawArchive, BarEntry as RawEntryMeta};
 
 #[wasm_bindgen]
 pub struct Bar {
     #[wasm_bindgen(skip)]
-    pub(crate) inner: Option<InnerBarReader<Cursor<Vec<u8>>>>,
+    pub(crate) inner: Option<RawArchive>,
+    #[wasm_bindgen(skip)]
+    pub(crate) reader: Cursor<Vec<u8>>,
+    #[wasm_bindgen(skip)]
+    pub(crate) default_key: [u8; 32],
+    #[wasm_bindgen(skip)]
+    pub(crate) signature_key: [u8; 32],
 }
 
 #[derive(Serialize)]
@@ -31,21 +35,21 @@ pub struct BarEntryMetadata {
     pub compressed_size: u32,
 }
 
-pub(crate) const fn header_from_raw(h: RawHeader) -> BarHeader {
+pub(crate) fn header_from_raw(h: &RawArchive) -> BarHeader {
     BarHeader {
-        version: h.version_and_flags.0,
-        flags: h.version_and_flags.1,
-        priority: h.priority,
-        timestamp: h.timestamp,
-        file_count: h.file_count,
+        version: h.archive_info.version,
+        flags: h.archive_info.flags,
+        priority: h.archive_data.priority,
+        timestamp: h.archive_data.timestamp,
+        file_count: h.archive_data.file_count,
     }
 }
 
-pub(crate) fn meta_from_raw(m: RawEntryMeta) -> BarEntryMetadata {
+pub(crate) fn meta_from_raw(m: &RawEntryMeta) -> BarEntryMetadata {
     BarEntryMetadata {
         name_hash: format!("{:08X}", m.name_hash.0),
-        offset: m.offset,
-        compression_raw: m.compression.into(),
+        offset: m.location.0,
+        compression_raw: m.location.1 as u8,
         uncompressed_size: m.uncompressed_size,
         compressed_size: m.compressed_size,
     }

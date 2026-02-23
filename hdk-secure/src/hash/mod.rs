@@ -1,5 +1,7 @@
+use binrw::binrw;
 use std::path::Path;
 
+#[binrw]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AfsHash(pub i32);
 

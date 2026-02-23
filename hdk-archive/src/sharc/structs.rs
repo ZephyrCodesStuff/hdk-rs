@@ -4,7 +4,7 @@ use binrw::{BinRead, BinWrite, binrw};
 use ctr::cipher::{KeyIvInit};
 use flate2::{read::ZlibDecoder};
 use hdk_comp::zlib::{reader::SegmentedZlibReader};
-use hdk_secure::{modes::XteaPS3, reader::CryptoReader};
+use hdk_secure::{hash::AfsHash, modes::XteaPS3, reader::CryptoReader};
 use num_enum::TryFromPrimitive;
 
 use super::cryptor::SharcCryptor;
@@ -83,7 +83,7 @@ pub struct SharcArchiveData {
 #[br(import(archive_size: u32, data_start_pos: u64))]
 #[derive(Debug)]
 pub struct SharcEntry {
-    pub name_hash: i32,
+    pub name_hash: AfsHash,
 
     #[br(try_map = |x: u32| {
         let offset = x & 0x3FFFFFFC; // Upper 30 bits

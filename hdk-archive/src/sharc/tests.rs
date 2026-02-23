@@ -27,7 +27,7 @@ fn read() {
         let data = archive
             .entry_data(&mut cur, entry)
             .expect("Failed to read entry data");
-        std::fs::write(format!("../out/{}.bin", entry.name_hash.abs()), data)
+        std::fs::write(format!("../out/{}.bin", entry.name_hash), data)
             .expect("Failed to write entry data");
     }
 
@@ -59,7 +59,7 @@ fn roundtrip() {
             3 => CompressionType::Encrypted,
             _ => unreachable!(),
         };
-        builder.add_entry(name_hash, data, compression, iv);
+        builder.add_entry(hdk_secure::hash::AfsHash(name_hash), data, compression, iv);
     }
 
     builder.build(&mut writer).expect("Failed to build archive");

@@ -4,7 +4,7 @@ use binrw::BinWrite;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use flate2::write::ZlibEncoder;
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
-use hdk_secure::modes::XteaPS3;
+use hdk_secure::{hash::AfsHash, modes::XteaPS3};
 use rand::Rng;
 
 use super::structs::{SharcArchive, SharcArchiveData, SharcArchiveMeta, SharcEntry};
@@ -23,7 +23,7 @@ pub struct SharcBuilder {
 }
 
 struct SharcBuilderEntry {
-    name_hash: i32,
+    name_hash: AfsHash,
     data: Vec<u8>,
     compression: CompressionType,
     iv: [u8; 8],
@@ -56,7 +56,7 @@ impl SharcBuilder {
     /// Add an entry to the archive.
     pub fn add_entry(
         &mut self,
-        name_hash: i32,
+        name_hash: AfsHash,
         data: Vec<u8>,
         compression: CompressionType,
         iv: [u8; 8],

@@ -39,7 +39,7 @@ impl BarBuilderEntry {
 impl BarBuilder {
     /// Create a new builder with the given keys.
     pub fn new(archive_key: [u8; 32], signature_key: [u8; 32]) -> Self {
-        BarBuilder {
+        Self {
             archive_key,
             signature_key,
             entries: Vec::new(),
@@ -50,19 +50,19 @@ impl BarBuilder {
     }
 
     /// Set archive priority (used when multiple archives have same filename).
-    pub fn with_priority(mut self, priority: i32) -> Self {
+    pub const fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
     }
 
     /// Set archive timestamp.
-    pub fn with_timestamp(mut self, timestamp: i32) -> Self {
+    pub const fn with_timestamp(mut self, timestamp: i32) -> Self {
         self.timestamp = timestamp;
         self
     }
 
     /// Set archive flags.
-    pub fn with_flags(mut self, flags: ArchiveFlags) -> Self {
+    pub const fn with_flags(mut self, flags: ArchiveFlags) -> Self {
         self.flags = flags;
         self
     }

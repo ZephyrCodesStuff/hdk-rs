@@ -19,7 +19,7 @@ impl<R: Seek> SharcCryptor<R> {
             .stream_position()
             .expect("Failed to get current position for SharcCryptor");
 
-        SharcCryptor {
+        Self {
             reader,
             cipher,
             start_offset,

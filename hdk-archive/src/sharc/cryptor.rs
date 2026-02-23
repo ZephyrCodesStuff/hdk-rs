@@ -29,11 +29,6 @@ impl<R: Seek> SharcCryptor<R> {
 
 impl<R: Read> Read for SharcCryptor<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        println!(
-            "cipher position before read: {}",
-            self.cipher.current_pos::<usize>()
-        );
-
         let n = self.reader.read(buf)?;
         self.cipher.apply_keystream(&mut buf[..n]);
         Ok(n)
@@ -42,8 +37,6 @@ impl<R: Read> Read for SharcCryptor<R> {
 
 impl<R: Seek> Seek for SharcCryptor<R> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        println!("Seeking to position: {:?}", pos);
-
         let phys_pos = match pos {
             SeekFrom::Start(n) => self.start_offset + n,
             SeekFrom::Current(n) => (self.reader.stream_position()? as i64 + n) as u64,

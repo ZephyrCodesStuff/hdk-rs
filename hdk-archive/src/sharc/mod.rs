@@ -1,6 +1,4 @@
-pub mod reader;
+pub mod builder;
+pub mod cryptor;
 pub mod structs;
-pub mod writer;
-
-#[cfg(test)]
-mod tests;
+pub mod tests;

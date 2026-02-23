@@ -1,7 +1,7 @@
 use super::structs::{BarEntry, BarEntryMetadata, BarHeader};
 
 use crate::archive::ArchiveReader;
-use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType, Endianness};
+use crate::structs::{ARCHIVE_MAGIC, ArchiveFlagsValue, ArchiveVersion, CompressionType, Endianness};
 
 use binrw::{BinReaderExt, Endian};
 use ctr::Ctr64BE;
@@ -16,7 +16,7 @@ pub struct BarReader<R: Read + Seek> {
     header: BarHeader,
     entries: Vec<BarEntry>,
     toc_base: u64,
-    flags: BitFlags<ArchiveFlags>,
+    flags: BitFlags<ArchiveFlagsValue>,
 
     /// The detected endianness of the archive.
     pub endianness: Endianness,
@@ -94,13 +94,13 @@ impl<R: Read + Seek> BarReader<R> {
             ));
         }
 
-        let flags = BitFlags::<ArchiveFlags>::from_bits_truncate(flags_val);
+        let flags = BitFlags::<ArchiveFlagsValue>::from_bits_truncate(flags_val);
 
         let entries_count = header.file_count as usize;
         let entries_size = (entries_count as u64) * 16;
 
         // Handle ZTOC
-        let (toc_data, toc_base) = if flags.contains(ArchiveFlags::ZTOC) {
+        let (toc_data, toc_base) = if flags.contains(ArchiveFlagsValue::ZTOC) {
             let compressed_size = reader
                 .read_type::<u32>(endian)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -191,7 +191,7 @@ impl<R: Read + Seek> ArchiveReader for BarReader<R> {
         self.inner.read_exact(&mut raw_data)?;
 
         let comp_type = entry.compression();
-        let use_zlib_header = !self.flags.contains(ArchiveFlags::LeanZLib);
+        let use_zlib_header = !self.flags.contains(ArchiveFlagsValue::LeanZLib);
 
         match comp_type {
             CompressionType::Encrypted => {

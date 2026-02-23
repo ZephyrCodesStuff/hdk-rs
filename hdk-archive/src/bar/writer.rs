@@ -8,7 +8,7 @@ use ctr::cipher::KeyIvInit;
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
 use hdk_secure::{blowfish::Blowfish, hash::AfsHash, writer::CryptoWriter};
 
-use crate::structs::{ARCHIVE_MAGIC, ArchiveFlags, ArchiveVersion, CompressionType};
+use crate::structs::{ARCHIVE_MAGIC, ArchiveFlagsValue, ArchiveVersion, CompressionType};
 
 pub struct BarWriter<W: Write> {
     /// The underlying writer.
@@ -19,7 +19,7 @@ pub struct BarWriter<W: Write> {
     /// The archive flags to write in the header.
     ///
     /// Default is no flags.
-    flags: BitFlags<ArchiveFlags>,
+    flags: BitFlags<ArchiveFlagsValue>,
 
     /// The timestamp of the archive.
     ///
@@ -106,7 +106,7 @@ impl<W: Write> BarWriter<W> {
     }
 
     /// Set the archive flags to write in the header.
-    pub const fn with_flags(mut self, flags: BitFlags<ArchiveFlags>) -> Self {
+    pub const fn with_flags(mut self, flags: BitFlags<ArchiveFlagsValue>) -> Self {
         self.flags = flags;
         self
     }

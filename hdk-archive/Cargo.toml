@@ -3,6 +3,9 @@ name = "hdk-archive"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+cloudflare_zlib = ["flate2/cloudflare_zlib"]
+
 [dependencies]
 aes = "0.8.4"
 byteorder = "1.5.0"

@@ -24,6 +24,7 @@ ctr = "0.9"
 generic-array = "0.14"
 cipher = "0.4"
 binrw = { version = "0.15.0", default-features = false }
+fancy-regex = "0.17.0"
 
 [profile.release]
 opt-level = "z"

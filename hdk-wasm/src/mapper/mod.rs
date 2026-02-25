@@ -32,7 +32,14 @@ impl WasmMapper {
 
     /// Scans a byte buffer and adds any found paths to the internal dictionary
     pub fn scan(&mut self, data: &[u8]) {
-        let local_matches = scan_content_for_paths(data, self.uuid.as_deref(), self.full);
+        let mut patterns = hdk_archive::mapper::FAST_PATTERNS.iter().map(|&x| x.to_string()).collect::<Vec<_>>();
+        if self.full { patterns.extend(hdk_archive::mapper::SLOW_PATTERNS.iter().map(|&x| x.to_string())); }
+
+        let compiled_regexes: Vec<fancy_regex::Regex> = patterns.iter().map(|p| {
+            fancy_regex::RegexBuilder::new(p).backtrack_limit(usize::MAX).build().unwrap()
+        }).collect();
+
+        let local_matches = scan_content_for_paths(data, self.uuid.as_deref(), &compiled_regexes);
 
         for (hash, path) in local_matches {
             self.mappings.insert(format!("{:08x}", hash.0 as u32), path);

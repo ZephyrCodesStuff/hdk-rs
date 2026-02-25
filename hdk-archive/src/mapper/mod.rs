@@ -31,11 +31,14 @@
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
-    sync::{RwLock, atomic::AtomicUsize},
+    path::{Path, PathBuf},
 };
 
 use hdk_secure::hash::AfsHash;
+use fancy_regex::{Regex, RegexBuilder};
+
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
 
 /// Fast regex patterns always used for finding file paths in UTF-8 data.
 pub const FAST_PATTERNS: [&str; 4] = [
@@ -116,40 +119,17 @@ pub fn get_common_mappings(uuid: Option<&str>) -> HashMap<AfsHash, String> {
 pub fn scan_content_for_paths(
     content: &[u8],
     uuid: Option<&str>,
-    full: bool,
+    regexes: &[Regex], // Pass pre-compiled regexes here
 ) -> HashMap<AfsHash, String> {
     let data_str = String::from_utf8_lossy(content);
     let mut local_matches = HashMap::new();
 
-    // Always scan fast patterns, optionally scan slow patterns
-    let mut patterns = FAST_PATTERNS
-        .iter()
-        .map(|&x| x.to_string())
-        .collect::<Vec<String>>();
-
-    if full {
-        patterns.extend(SLOW_PATTERNS.iter().map(|&x| x.to_string()));
-    }
-
-    // Precompile regexes
-    let compiled_regexes: Vec<fancy_regex::Regex> = patterns
-        .iter()
-        .map(|pattern| {
-            fancy_regex::RegexBuilder::new(pattern)
-                .backtrack_limit(usize::MAX)
-                .build()
-                .unwrap()
-        })
-        .collect();
-
-    for regex in &compiled_regexes {
-        let matches: Vec<_> = regex.find_iter(&data_str).filter_map(|m| m.ok()).collect();
+    for regex in regexes {
+        let matches = regex.find_iter(&data_str).filter_map(|m| m.ok());
 
         for m in matches {
-            // Start with the raw match string and try to extract the actual path
             let mut raw = m.as_str().to_string();
 
-            // If the match contains quoted content, extract the part between the first and last quote
             if raw.contains('"') {
                 if let (Some(s), Some(e)) = (raw.find('"'), raw.rfind('"'))
                     && e > s
@@ -157,7 +137,6 @@ pub fn scan_content_for_paths(
                     raw = raw[s + 1..e].to_string();
                 }
             } else {
-                // Remove common leading tokens like `source=` or `file=` and trim
                 raw = raw
                     .trim()
                     .trim_start_matches("source=")
@@ -166,14 +145,13 @@ pub fn scan_content_for_paths(
                     .to_string();
             }
 
-            // Normalize slashes and lowercase (matches are compared against string-hashed entries)
             let path_str = raw
                 .to_lowercase()
                 .replace("\\", "/")
                 .replace("file:///resource_root/build/", "")
                 .replace("file://resource_root/build/", "");
 
-            // Generate scene extension variants for the plain path (non-UUID)
+            // Variants logic
             if let Some(base) = SCENE_EXTENSIONS
                 .iter()
                 .find_map(|ext| path_str.strip_suffix(format!(".{ext}").as_str()))
@@ -183,29 +161,20 @@ pub fn scan_content_for_paths(
                     let hashed_val = AfsHash::new_from_str(&scene_val);
                     local_matches.insert(hashed_val, scene_val.clone());
 
-                    // Also insert UUID-prefixed variant so object-scoped hashes match
                     if let Some(uuid) = uuid {
                         let scene_uuid = format!("Objects/{uuid}/{scene_val}");
-                        let hashed_uuid = AfsHash::new_from_str(&scene_uuid);
-                        local_matches.insert(hashed_uuid, scene_uuid);
+                        local_matches.insert(AfsHash::new_from_str(&scene_uuid), scene_uuid);
                     }
                 }
-
-                // Also try _EXTRAS.SCENE
                 let extras_val = format!("{base}_extras.scene");
-                let hashed_extras = AfsHash::new_from_str(&extras_val);
-                local_matches.insert(hashed_extras, extras_val.clone());
+                local_matches.insert(AfsHash::new_from_str(&extras_val), extras_val);
             }
 
-            // Insert the plain path
-            let hash_plain = AfsHash::new_from_str(&path_str);
-            local_matches.insert(hash_plain, path_str.clone());
+            local_matches.insert(AfsHash::new_from_str(&path_str), path_str.clone());
 
-            // If mapping an object, also insert the UUID-prefixed path variant
             if let Some(uuid) = uuid {
                 let uuid_path = format!("Objects/{uuid}/{path_str}");
-                let hash_uuid = AfsHash::new_from_str(&uuid_path);
-                local_matches.insert(hash_uuid, uuid_path);
+                local_matches.insert(AfsHash::new_from_str(&uuid_path), uuid_path);
             }
         }
     }
@@ -309,175 +278,114 @@ impl Mapper {
 
     /// Run the mapping process and return a summary `MappingResult`.
     pub fn run(self) -> MappingResult {
-        let Self {
-            input_folder,
-            output_folder: builder_output,
-            uuid,
-            full,
-            extra_files,
-        } = self;
+        let Self { ref input_folder, output_folder: ref builder_output, ref uuid, full, ref extra_files } = self;
 
-        // Load all files in the input folder
-        let mut paths: Vec<PathBuf> = Vec::new();
+        // 1. Collect all paths (Serial is fine for metadata scan)
+        let mut paths: Vec<PathBuf> = walkdir::WalkDir::new(input_folder)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .map(|e| e.path().to_path_buf())
+            .collect();
 
-        let result = (|| -> Result<(), walkdir::Error> {
-            for entry in walkdir::WalkDir::new(&input_folder).into_iter() {
-                let entry = entry?;
-
-                if !entry.path().is_file() {
-                    continue;
-                }
-
-                paths.push(entry.path().to_path_buf());
-            }
-
-            Ok(())
-        })();
-
-        if result.is_err() {
-            println!("Failed to read folder {}!", input_folder.display());
-            return MappingResult {
-                mapped: 0,
-                not_found: Vec::new(),
-            };
+        paths.extend(extra_files.iter().filter(|p| p.is_file()).cloned());
+        
+        if paths.is_empty() {
+            return MappingResult { mapped: 0, not_found: Vec::new() };
         }
 
-        // Add any extra files provided via builder
-        for path in extra_files {
-            if path.exists() && path.is_file() {
-                println!("Reading additional file {}", path.display());
-                paths.push(path);
-            } else {
-                println!("Could not read additional file {}", path.display());
-            }
-        }
+        // 2. Pre-compile Regexes ONCE
+        let mut patterns = FAST_PATTERNS.iter().map(|&x| x.to_string()).collect::<Vec<_>>();
+        if full { patterns.extend(SLOW_PATTERNS.iter().map(|&x| x.to_string())); }
+        
+        let compiled_regexes: Vec<Regex> = patterns.iter().map(|p| {
+            RegexBuilder::new(p).backtrack_limit(usize::MAX).build().unwrap()
+        }).collect();
 
-        let file_count = paths.len() as u64;
+        // 3. Parallel Scanning Phase
+        #[cfg(feature = "rayon")]
+        let discovered_mappings = {
+            paths.par_iter()
+                .filter_map(|p| std::fs::read(p).ok())
+                .fold(HashMap::new, |mut acc, buf| {
+                    let matches = scan_content_for_paths(&buf, uuid.as_deref(), &compiled_regexes);
+                    acc.extend(matches);
+                    acc
+                })
+                .reduce(HashMap::new, |mut a, b| { a.extend(b); a })
+        };
 
-        if file_count == 0 {
-            println!("No files found in the folder!");
-            return MappingResult {
-                mapped: 0,
-                not_found: Vec::new(),
-            };
-        }
-
-        let hashes = RwLock::new(HashMap::new());
-
-        // insert static hashes for files that do not get referenced (therefore can't be detected)
-        // Use the same string-based normalization used for matches so hashing is consistent.
-        {
-            let common = get_common_mappings(uuid.as_deref());
-            let mut main_hashes = hashes.write().unwrap();
-            for (k, v) in common {
-                main_hashes.insert(k, PathBuf::from(v));
-            }
-        }
-
-        // Use a shared map to accumulate found mappings
-        let result_hashes: RwLock<_> = RwLock::new(HashMap::new());
-
-        for path in &paths {
-            let buf: Vec<u8> = match std::fs::read(path) {
-                Ok(content) => content,
-                Err(_) => continue,
-            };
-
-            let local_matches = scan_content_for_paths(&buf, uuid.as_deref(), full);
-
-            {
-                let mut shared_hashes = result_hashes.write().unwrap();
-                for (key, value) in local_matches {
-                    shared_hashes.insert(key, value);
+        #[cfg(not(feature = "rayon"))]
+        let discovered_mappings = {
+            let mut acc = HashMap::new();
+            for p in &paths {
+                if let Ok(buf) = std::fs::read(p) {
+                    acc.extend(scan_content_for_paths(&buf, uuid.as_deref(), &compiled_regexes));
                 }
             }
+            acc
+        };
+
+        // 4. Merge with Static Mappings
+        let mut final_hashes = get_common_mappings(uuid.as_deref());
+        for (k, v) in discovered_mappings {
+            final_hashes.insert(k, v);
         }
 
-        // Merge the results into the main hashes map
-        {
-            let mut main_hashes = hashes.write().unwrap();
-            let shared_results = result_hashes.read().unwrap();
+        // 5. Prepare Output
+        let output_folder: PathBuf = builder_output
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| {
+                let folder_name = input_folder.file_name().unwrap().to_str().unwrap();
+                input_folder
+                    .parent()
+                    .unwrap()
+                    .join(format!("{folder_name}_mapped"))
+            });
 
-            for (k, v) in shared_results.iter() {
-                main_hashes.insert(*k, v.into());
-            }
-        }
+        // 6. Parallel Mapping (File Copy) Phase
+        // Moving files and creating dirs in parallel is much faster on NVMe
+        let file_count = paths.len();
+        
+        #[cfg(feature = "rayon")]
+        let not_found_list: Vec<PathBuf> = {
+            paths.into_par_iter()
+                .filter_map(|path| {
+                    self.process_single_file(&path, &output_folder, &final_hashes)
+                })
+                .collect()
+        };
 
-        // Check if we found any hashes
-        if hashes.read().unwrap().is_empty() {
-            return MappingResult {
-                mapped: 0,
-                not_found: Vec::new(),
-            };
-        }
-
-        // Prepare output folder
-        let output_folder = builder_output.unwrap_or_else(|| {
-            let mut output = input_folder.clone();
-            let folder_name = input_folder.file_name().unwrap().to_str().unwrap();
-
-            output = output
-                .parent()
-                .unwrap()
-                .join(format!("{folder_name}_mapped"));
-
-            output
-        });
-
-        // Actually write the mapped files
-        let found: AtomicUsize = AtomicUsize::new(0);
-        let not_found = RwLock::new(Vec::new());
-
-        for path in &paths {
-            let hash_str = path.file_name().unwrap().to_str().unwrap().to_owned();
-            println!(
-                "Mapping file {}/{}: {}",
-                found.load(std::sync::atomic::Ordering::Relaxed) + 1,
-                file_count,
-                hash_str
-            );
-
-            if !AfsHash::is_valid_hash_str(&hash_str) {
-                continue;
-            }
-
-            let hash_val = u32::from_str_radix(&hash_str, 16).unwrap();
-            let hash = AfsHash(hash_val as i32);
-            let recovered_path = {
-                let rw = hashes.read().unwrap();
-                match rw.get(&hash) {
-                    Some(p) => p.clone(),
-                    None => {
-                        println!("[!] Could not find mapping for file {}", path.display());
-                        not_found.write().unwrap().push(path.clone());
-                        continue;
-                    }
-                }
-            };
-
-            let output_path = output_folder.join(recovered_path);
-            std::fs::create_dir_all(output_path.parent().unwrap()).unwrap();
-
-            // Note: apparently moving a file DOES NOT take less time than copying it..?
-            std::fs::copy(path, &output_path).unwrap();
-
-            found.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-
-        let found = found.load(std::sync::atomic::Ordering::Relaxed);
-
-        // Copy .time file
-        let time_file = input_folder.join(".time");
-        if time_file.is_file() {
-            let output_time_file = output_folder.join(".time");
-            std::fs::copy(time_file, output_time_file).unwrap();
-        } else {
-            println!("No .time file found. Archive may fail to mount! (SEC error -6 in logs)");
-        }
+        #[cfg(not(feature = "rayon"))]
+        let not_found_list: Vec<PathBuf> = {
+            paths.into_iter()
+                .filter_map(|path| self.process_single_file(&path, &output_folder, &final_hashes))
+                .collect()
+        };
 
         MappingResult {
-            mapped: found,
-            not_found: not_found.into_inner().unwrap(),
+            mapped: file_count - not_found_list.len(),
+            not_found: not_found_list,
         }
+    }
+
+    /// Helper to process a single file mapping
+    fn process_single_file(&self, path: &Path, output_folder: &Path, hashes: &HashMap<AfsHash, String>) -> Option<PathBuf> {
+        let hash_str = path.file_name()?.to_str()?;
+        if !AfsHash::is_valid_hash_str(hash_str) { return None; }
+
+        let hash_val = u32::from_str_radix(hash_str, 16).ok()?;
+        let hash = AfsHash(hash_val as i32);
+
+        if let Some(recovered_path) = hashes.get(&hash) {
+            let output_path = output_folder.join(recovered_path);
+            let _ = std::fs::create_dir_all(output_path.parent().unwrap());
+            if std::fs::copy(path, &output_path).is_ok() {
+                return None;
+            }
+        }
+        
+        Some(path.to_path_buf())
     }
 }

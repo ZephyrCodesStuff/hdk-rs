@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 cloudflare_zlib = ["flate2/cloudflare_zlib"]
+isal = ["hdk-comp/isal"]
 
 [dependencies]
 aes = "0.8.4"

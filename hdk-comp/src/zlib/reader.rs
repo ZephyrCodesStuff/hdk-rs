@@ -1,5 +1,4 @@
 use byteorder::{BigEndian, ReadBytesExt};
-use flate2::{Decompress, read::ZlibDecoder};
 use std::io::{self, Read};
 
 use super::EDGE_ZLIB_CHUNK_HEADER_SIZE;
@@ -48,9 +47,22 @@ impl<R: Read> SegmentedZlibReader<R> {
         } else {
             // Compressed chunk
             self.current_chunk.reserve(src_size);
-            let no_header = Decompress::new(false);
-            let mut decoder = ZlibDecoder::new_with_decompress(&chunk_data[..], no_header);
-            decoder.read_to_end(&mut self.current_chunk)?;
+
+            #[cfg(not(feature = "isal"))]
+            {
+                use flate2::{Decompress, read::ZlibDecoder};
+                
+                let no_header = Decompress::new(false);
+                let mut decoder = ZlibDecoder::new_with_decompress(&chunk_data[..], no_header);
+                decoder.read_to_end(&mut self.current_chunk)?;
+            }
+
+            #[cfg(feature = "isal")]
+            {
+                use isal::Codec;
+
+                self.current_chunk = isal::decompress(&*chunk_data, Codec::Deflate)?;
+            }
         }
 
         Ok(true)

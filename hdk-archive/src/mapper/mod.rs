@@ -333,16 +333,14 @@ impl Mapper {
         }
 
         // 5. Prepare Output
-        let output_folder: PathBuf = builder_output
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| {
-                let folder_name = input_folder.file_name().unwrap().to_str().unwrap();
-                input_folder
-                    .parent()
-                    .unwrap()
-                    .join(self.output_folder.clone().unwrap_or_else(|| format!("{}_mapped", folder_name).into()))
-            });
+        let output_folder: PathBuf = builder_output.clone().unwrap_or_else(|| {
+            // Fallback: If no output provided, use input_path + "_mapped"
+            let mut path = input_folder.clone();
+            let mut name = path.file_name().unwrap().to_os_string();
+            name.push("_mapped");
+            path.set_file_name(name);
+            path
+        });
 
         // 6. Parallel Mapping (File Copy) Phase
         // Moving files and creating dirs in parallel is much faster on NVMe

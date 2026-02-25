@@ -824,6 +824,7 @@ dependencies = [
  "enumflags2",
  "git-version",
  "sha1_smol",
+ "smallvec",
  "thiserror",
  "tracing",
 ]

@@ -1,5 +1,8 @@
+use smallvec::SmallVec;
+
 use crate::CryptoContext;
 use crate::CryptoError;
+use crate::ENCRYPT_SCRATCH;
 use crate::MemoryError;
 use crate::crypto::{
     EDAT_COMPRESSED_FLAG, EDAT_DEBUG_DATA_FLAG, EDAT_ENCRYPTED_KEY_FLAG, EDAT_FLAG_0X02,
@@ -368,114 +371,133 @@ impl DataBlockProcessor {
     /// # Errors
     ///
     /// This function will return an error if encryption fails.
+    #[allow(clippy::type_complexity, reason = "not really that complex")]
     pub fn encrypt_data_block(
         &self,
         plaintext_data: &[u8],
         options: EncryptBlockOptions,
-    ) -> Result<(Vec<u8>, Vec<u8>), SdatError> {
+    ) -> Result<(SmallVec<[u8; 64]>, SmallVec<[u8; 20]>), SdatError> {
+        // SmallVec results
         let EncryptBlockOptions {
             block_index,
             edat_header,
             npd_header,
             crypt_key,
         } = options;
-        // Pad length to 16-byte boundary
+
+        // 1. Padding without allocating a new Vec
         let pad_length = plaintext_data.len();
-        let length = (pad_length + 0xF) & 0xFFFFFFF0;
+        let length = (pad_length + 0xF) & !0xF; // Mask is cleaner than addition
 
-        let mut padded_data = vec![0u8; length];
-        padded_data[..pad_length].copy_from_slice(plaintext_data);
+        // Access the scratchpad for THIS thread
+        ENCRYPT_SCRATCH.with(|scratch_cell| {
+            let mut scratchpad = scratch_cell.borrow_mut();
 
-        // Generate block key
-        let block_key = crate::crypto::generate_block_key(
-            block_index,
-            &npd_header.dev_hash,
-            npd_header.version,
-        );
+            scratchpad.clear();
+            scratchpad.resize(length, 0); // This only allocates if the file is bigger than before
+            scratchpad[..pad_length].copy_from_slice(plaintext_data);
 
-        // Encrypt the block key with the crypto key to get the final key
-        let mut key_result = [0u8; 16];
-        self.crypto_ctx
-            .aes_ecb_encrypt(&crypt_key, &block_key, &mut key_result)?;
+            // Generate block key
+            let block_key = crate::crypto::generate_block_key(
+                block_index,
+                &npd_header.dev_hash,
+                npd_header.version,
+            );
 
-        // Generate hash key
-        let hash_key = if (edat_header.flags & EDAT_FLAG_0X10) != 0 {
-            // If FLAG 0x10 is set, encrypt again to get the final hash
-            let mut hash = [0u8; 16];
+            // Encrypt the block key with the crypto key to get the final key
+            let mut key_result = [0u8; 16];
             self.crypto_ctx
-                .aes_ecb_encrypt(&crypt_key, &key_result, &mut hash)?;
-            hash
-        } else {
-            key_result
-        };
+                .aes_ecb_encrypt(&crypt_key, &block_key, &mut key_result)?;
 
-        // Setup crypto and hashing modes based on flags
-        let crypto_mode = if (edat_header.flags & EDAT_FLAG_0X02) == 0 {
-            0x2
-        } else {
-            0x1
-        };
-        let hash_mode = if (edat_header.flags & EDAT_FLAG_0X10) == 0 {
-            0x02
-        } else if (edat_header.flags & EDAT_FLAG_0X20) == 0 {
-            0x04
-        } else {
-            0x01
-        };
+            // Generate hash key
+            let hash_key = if (edat_header.flags & EDAT_FLAG_0X10) != 0 {
+                // If FLAG 0x10 is set, encrypt again to get the final hash
+                let mut hash = [0u8; 16];
+                self.crypto_ctx
+                    .aes_ecb_encrypt(&crypt_key, &key_result, &mut hash)?;
+                hash
+            } else {
+                key_result
+            };
 
-        // Apply encryption flags
-        let crypto_mode = if (edat_header.flags & EDAT_ENCRYPTED_KEY_FLAG) != 0 {
-            crypto_mode | 0x10000000
-        } else {
-            crypto_mode
-        };
+            // Setup crypto and hashing modes based on flags
+            let crypto_mode = if (edat_header.flags & EDAT_FLAG_0X02) == 0 {
+                0x2
+            } else {
+                0x1
+            };
+            let hash_mode = if (edat_header.flags & EDAT_FLAG_0X10) == 0 {
+                0x02
+            } else if (edat_header.flags & EDAT_FLAG_0X20) == 0 {
+                0x04
+            } else {
+                0x01
+            };
 
-        let hash_mode = if (edat_header.flags & EDAT_ENCRYPTED_KEY_FLAG) != 0 {
-            hash_mode | 0x10000000
-        } else {
-            hash_mode
-        };
+            // Apply encryption flags
+            let crypto_mode = if (edat_header.flags & EDAT_ENCRYPTED_KEY_FLAG) != 0 {
+                crypto_mode | 0x10000000
+            } else {
+                crypto_mode
+            };
 
-        let mut encrypted_data = vec![0u8; length];
-        let mut hash = vec![
-            0u8;
-            if (hash_mode & 0xFF) == 0x01 {
+            let hash_mode = if (edat_header.flags & EDAT_ENCRYPTED_KEY_FLAG) != 0 {
+                hash_mode | 0x10000000
+            } else {
+                hash_mode
+            };
+
+            // Since we are doing encryption, many ciphers can work IN-PLACE.
+            // Check if self.encrypt_and_hash supports in-place transformation.
+            let mut hash: SmallVec<[u8; 20]> = SmallVec::new();
+            let hash_len = if (hash_mode & 0xFF) == 0x01 {
                 0x14
             } else {
                 0x10
-            }
-        ];
-
-        if (edat_header.flags & EDAT_DEBUG_DATA_FLAG) != 0 {
-            // Debug data: simply copy without encryption
-            encrypted_data.copy_from_slice(&padded_data);
-            // Generate a dummy hash for debug data
-            hash.fill(0);
-        } else {
-            // Perform encryption
-            let iv = if npd_header.version <= 1 {
-                &EDAT_IV
-            } else {
-                &npd_header.digest
             };
+            unsafe {
+                hash.set_len(hash_len);
+            }
 
-            self.encrypt_and_hash(
-                &padded_data,
-                &mut encrypted_data,
-                crate::options::CryptoOpOptions {
-                    hash_mode,
-                    crypto_mode,
-                    version: u32::from(npd_header.version == 4),
-                    key: key_result,
-                    iv: *iv,
-                    hash_key,
-                    expected_hash: Vec::new(),
-                },
-                &mut hash,
-            )?;
-        }
+            // 3. Encrypt directly in the scratchpad if possible
+            // If your crypto library allows it, encrypting 'scratchpad' into 'scratchpad'
+            // saves one entire memory copy.
+            let mut encrypted_output = SmallVec::with_capacity(length);
+            unsafe {
+                encrypted_output.set_len(length);
+            }
 
-        Ok((encrypted_data, hash))
+            if (edat_header.flags & EDAT_DEBUG_DATA_FLAG) != 0 {
+                // Debug data: simply copy without encryption
+                encrypted_output.copy_from_slice(&scratchpad);
+                // Generate a dummy hash for debug data
+                hash.fill(0);
+            } else {
+                // Perform encryption
+                let iv = if npd_header.version <= 1 {
+                    &EDAT_IV
+                } else {
+                    &npd_header.digest
+                };
+
+                self.encrypt_and_hash(
+                    &scratchpad,
+                    &mut encrypted_output,
+                    crate::options::CryptoOpOptions {
+                        hash_mode,
+                        crypto_mode,
+                        version: u32::from(npd_header.version == 4),
+                        key: key_result,
+                        iv: *iv,
+                        hash_key,
+                        expected_hash: Vec::new(),
+                    },
+                    &mut hash,
+                )?;
+            }
+
+            Ok((encrypted_output, hash))
+        })
     }
 
     /// Decrypt and verify a data block (internal helper)

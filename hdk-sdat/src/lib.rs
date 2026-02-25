@@ -27,3 +27,11 @@ mod tests;
 pub mod block;
 pub mod options;
 pub use block::DataBlockProcessor;
+
+// Used for DataBlockProcessor and other places where we need a scratch buffer for encryption/compression.
+use std::cell::RefCell;
+thread_local! {
+    // We use RefCell because the static itself is immutable,
+    // but we need to mutate the buffer inside it.
+    static ENCRYPT_SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(65536)); // 64KB
+}

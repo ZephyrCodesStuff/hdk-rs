@@ -26,7 +26,14 @@ pub struct SharcBuilder {
 struct SharcBuilderEntry {
     name_hash: AfsHash,
     data: Vec<u8>,
+    uncompressed_size: u32,
+
+    /// Compression type to use for this entry (affects how data is stored in the archive).
     compression: CompressionType,
+
+    /// Whether the data is already compressed (added via `add_compressed_entry`).
+    pre_compressed: bool,
+
     iv: [u8; 8],
 }
 
@@ -61,7 +68,10 @@ impl SharcBuilder {
         self
     }
 
-    /// Add an entry to the archive.
+    /// Add an entry to the archive with uncompressed data.
+    ///
+    /// The data will be compressed during `build()` according to the specified compression type.
+    /// For parallel compression outside the library, use `compress_data()` then `add_compressed_entry()`.
     pub fn add_entry(
         &mut self,
         name_hash: AfsHash,
@@ -69,22 +79,64 @@ impl SharcBuilder {
         compression: CompressionType,
         iv: [u8; 8],
     ) {
+        let uncompressed_size = data.len() as u32;
         self.entries.push(SharcBuilderEntry {
             name_hash,
             data,
+            uncompressed_size,
             compression,
+            pre_compressed: false,
             iv,
         });
     }
 
-    /// Compress data according to the compression type.
-    fn compress_entry(
+    /// Add an entry with data that has already been compressed externally.
+    ///
+    /// Use this with `compress_data()` to handle compression in parallel (e.g., with rayon).
+    pub fn add_compressed_entry(
+        &mut self,
+        name_hash: AfsHash,
+        compressed_data: Vec<u8>,
+        uncompressed_size: u32,
+        compression: CompressionType,
+        iv: [u8; 8],
+    ) {
+        self.entries.push(SharcBuilderEntry {
+            name_hash,
+            data: compressed_data,
+            uncompressed_size,
+            compression,
+            pre_compressed: true,
+            iv,
+        });
+    }
+
+    /// Compress data using this builder's cryptographic keys.
+    ///
+    /// This is a pure function that can be called in parallel (e.g., with rayon) outside the library.
+    /// The result can be added with `add_compressed_entry()`.
+    pub fn compress_data(
+        &self,
         data: &[u8],
         compression: CompressionType,
+        iv: &[u8; 8],
+    ) -> std::io::Result<Vec<u8>> {
+        Self::compress_entry(data, Some(compression), &self.files_key, iv)
+    }
+
+    /// Compress data according to the compression type.
+    pub fn compress_entry(
+        data: &[u8],
+        compression: Option<CompressionType>,
         key: &[u8; 16],
         iv: &[u8; 8],
     ) -> std::io::Result<Vec<u8>> {
-        match compression {
+        // If no compression type is specified, assume data is already compressed
+        if compression.is_none() {
+            return Ok(data.to_vec());
+        }
+
+        match compression.unwrap() {
             CompressionType::None => Ok(data.to_vec()),
 
             CompressionType::ZLib => {
@@ -143,13 +195,19 @@ impl SharcBuilder {
             .entries
             .iter()
             .map(|entry| {
-                let data = Self::compress_entry(
-                    &entry.data,
-                    entry.compression,
-                    &self.files_key,
-                    &entry.iv,
-                )
-                .expect("Failed to compress entry");
+                let data = if entry.pre_compressed {
+                    // Data is already compressed, use as-is
+                    entry.data.clone()
+                } else {
+                    // Compress according to the specified compression type
+                    Self::compress_entry(
+                        &entry.data,
+                        Some(entry.compression),
+                        &self.files_key,
+                        &entry.iv,
+                    )
+                    .expect("Failed to compress entry")
+                };
 
                 entry_offsets.push((current_offset, data.len() as u32));
                 current_offset = (current_offset + data.len() as u32 + 3) & !3; // Align to next 4-byte boundary
@@ -178,7 +236,7 @@ impl SharcBuilder {
                 .map(|(entry, (offset, compressed_size))| SharcEntry {
                     name_hash: entry.name_hash,
                     location: (*offset, entry.compression),
-                    uncompressed_size: entry.data.len() as u32,
+                    uncompressed_size: entry.uncompressed_size,
                     compressed_size: *compressed_size,
                     iv: entry.iv,
                 })

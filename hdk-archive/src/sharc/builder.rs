@@ -121,22 +121,17 @@ impl SharcBuilder {
         compression: CompressionType,
         iv: &[u8; 8],
     ) -> std::io::Result<Vec<u8>> {
-        Self::compress_entry(data, Some(compression), &self.files_key, iv)
+        Self::compress_entry(data, compression, &self.files_key, iv)
     }
 
     /// Compress data according to the compression type.
     pub fn compress_entry(
         data: &[u8],
-        compression: Option<CompressionType>,
+        compression: CompressionType,
         key: &[u8; 16],
         iv: &[u8; 8],
     ) -> std::io::Result<Vec<u8>> {
-        // If no compression type is specified, assume data is already compressed
-        if compression.is_none() {
-            return Ok(data.to_vec());
-        }
-
-        match compression.unwrap() {
+        match compression {
             CompressionType::None => Ok(data.to_vec()),
 
             CompressionType::ZLib => {
@@ -200,13 +195,8 @@ impl SharcBuilder {
                     entry.data.clone()
                 } else {
                     // Compress according to the specified compression type
-                    Self::compress_entry(
-                        &entry.data,
-                        Some(entry.compression),
-                        &self.files_key,
-                        &entry.iv,
-                    )
-                    .expect("Failed to compress entry")
+                    Self::compress_entry(&entry.data, entry.compression, &self.files_key, &entry.iv)
+                        .expect("Failed to compress entry")
                 };
 
                 entry_offsets.push((current_offset, data.len() as u32));

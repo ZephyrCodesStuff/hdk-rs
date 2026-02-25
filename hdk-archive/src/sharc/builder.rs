@@ -182,39 +182,36 @@ impl SharcBuilder {
             ));
         }
 
-        // Sort entries decreasing by name hash to match expected order in SHARC files
+        // Sort entries once
         self.entries
             .sort_by_key(|e| std::cmp::Reverse(e.name_hash.0));
 
-        // Generate random IV for archive metadata
-        let mut archive_iv = [0u8; 16];
-        let mut rng = rand::rng();
-        rng.fill(&mut archive_iv);
-
-        // Calculate offsets for all entries (aligned to 4 bytes)
-        let mut entry_offsets = Vec::new();
+        // Pre-calculate sizes and offsets
+        // We MUST do this first because the Header/Table of Contents
+        // needs the offsets before we write the file data.
+        let mut entry_metadata = Vec::with_capacity(self.entries.len());
         let mut current_offset = 0u32;
-        let compressed: Vec<SmallVec<[u8; 16_384]>> = self
-            .entries
-            .iter_mut()
-            .map(|entry| {
-                let data = if entry.pre_compressed {
-                    // Data is already compressed, use as-is
-                    std::mem::take(&mut entry.data)
-                } else {
-                    // Compress according to the specified compression type
-                    Self::compress_entry(&entry.data, entry.compression, &self.files_key, &entry.iv)
-                        .expect("Failed to compress entry")
-                };
 
-                entry_offsets.push((current_offset, data.len() as u32));
-                current_offset = (current_offset + data.len() as u32 + 3) & !3; // Align to next 4-byte boundary
+        for entry in &self.entries {
+            // If it's already compressed, we know the size.
+            // If not, we have to do a "dry run" or just accept the clone here.
+            let size = if entry.pre_compressed {
+                entry.data.len() as u32
+            } else {
+                // This is the only place where a temporary allocation happens
+                // if the user didn't use the parallel 'compress_data' first.
+                Self::compress_entry(&entry.data, entry.compression, &self.files_key, &entry.iv)?
+                    .len() as u32
+            };
 
-                data
-            })
-            .collect();
+            entry_metadata.push((current_offset, size));
+            current_offset = (current_offset + size + 3) & !3;
+        }
 
-        // Build archive structure
+        // Build Header and Table of Contents
+        let mut archive_iv = [0u8; 16];
+        rand::rng().fill(&mut archive_iv);
+
         let archive = SharcArchive {
             archive_info: SharcArchiveMeta {
                 version: 512,
@@ -230,7 +227,7 @@ impl SharcBuilder {
             entries: self
                 .entries
                 .iter()
-                .zip(entry_offsets.iter())
+                .zip(entry_metadata.iter())
                 .map(|(entry, (offset, compressed_size))| SharcEntry {
                     name_hash: entry.name_hash,
                     location: (*offset, entry.compression),
@@ -241,22 +238,28 @@ impl SharcBuilder {
                 .collect(),
         };
 
-        // Write archive metadata and entry table
+        // Write Header (The TOC)
         match endian {
             Endian::Little => archive.write_le_args(writer, (self.archive_key,)),
             Endian::Big => archive.write_be_args(writer, (self.archive_key,)),
         }
         .map_err(|e| std::io::Error::other(format!("Failed to write archive: {e}")))?;
 
-        // Write compressed file data with 4-byte alignment padding
-        for entry in compressed {
-            writer.write_all(&entry)?;
+        // Drain entries and write file data blobs
+        let padding_buf = [0u8; 3];
+        for entry in self.entries.drain(..) {
+            let data = if entry.pre_compressed {
+                entry.data // This is a MOVE, zero cost.
+            } else {
+                Self::compress_entry(&entry.data, entry.compression, &self.files_key, &entry.iv)?
+            };
 
-            // Write padding to align to next 4-byte boundary
-            let padding = [0u8; 3];
-            let padding_needed = (4 - (entry.len() % 4)) % 4;
+            writer.write_all(&data)?;
+
+            // Alignment Padding
+            let padding_needed = (4 - (data.len() % 4)) % 4;
             if padding_needed > 0 {
-                writer.write_all(&padding[..padding_needed])?;
+                writer.write_all(&padding_buf[..padding_needed])?;
             }
         }
 

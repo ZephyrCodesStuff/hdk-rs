@@ -1,10 +1,11 @@
 use std::io::{Seek, Write};
 
 use binrw::{BinWrite, Endian};
-use ctr::cipher::KeyIvInit;
+use ctr::cipher::{KeyIvInit, StreamCipher};
 use flate2::write::ZlibEncoder;
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
-use hdk_secure::{hash::AfsHash, modes::BlowfishPS3, writer::CryptoWriter};
+use hdk_secure::{hash::AfsHash, modes::BlowfishPS3};
+use smallvec::SmallVec;
 
 use super::structs::{BarArchive, BarArchiveData, BarArchiveMeta, BarEntry};
 use crate::structs::{ArchiveFlags, ArchiveVersion, CompressionType};
@@ -24,7 +25,7 @@ pub struct BarBuilder {
 
 struct BarBuilderEntry {
     name_hash: AfsHash,
-    data: Vec<u8>,
+    data: SmallVec<[u8; 16_384]>, // Use SmallVec to avoid heap allocation for small files
     compression: CompressionType,
 }
 
@@ -68,10 +69,13 @@ impl BarBuilder {
     }
 
     /// Add an entry to the archive.
-    pub fn add_entry(&mut self, name_hash: AfsHash, data: Vec<u8>, compression: CompressionType) {
+    pub fn add_entry<D>(&mut self, name_hash: AfsHash, data: D, compression: CompressionType)
+    where
+        D: Into<SmallVec<[u8; 16_384]>>,
+    {
         self.entries.push(BarBuilderEntry {
             name_hash,
-            data,
+            data: data.into(),
             compression,
         });
     }
@@ -93,94 +97,80 @@ impl BarBuilder {
         self.entries
             .sort_by_key(|e| std::cmp::Reverse(e.name_hash.0));
 
-        let file_count = self.entries.len() as u32;
-
-        // Pass 1: Handle compression and initial size calculation
-        let mut entry_compressed_data = Vec::with_capacity(self.entries.len());
-        let mut entry_offsets = Vec::with_capacity(self.entries.len());
+        // Pre-calculate entry metadata
+        let file_count = self.entries.len();
+        let mut final_entry_data = Vec::with_capacity(file_count);
+        let mut entry_offsets = Vec::with_capacity(file_count);
         let mut current_offset = 0u32;
 
-        for entry in &self.entries {
-            let data = match entry.compression {
-                CompressionType::None => entry.data.clone(),
+        // Use drain() to take ownership of entries without cloning
+        for entry in self.entries.drain(..) {
+            let checksum = entry.sha1();
+            let uncompressed_size = entry.data.len() as u32;
+
+            // Compression
+            let compressed = match entry.compression {
+                CompressionType::None => entry.data, // SmallVec::from_vec
                 CompressionType::ZLib => {
                     let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
                     encoder.write_all(&entry.data)?;
-                    encoder.finish()?
+                    encoder.finish().map(SmallVec::from_vec)?
                 }
                 CompressionType::EdgeZLib | CompressionType::Encrypted => {
                     let mut encoder = SegmentedZlibWriter::new(Vec::new());
                     encoder.write_all(&entry.data)?;
-                    encoder.finish()?
+                    encoder.finish().map(SmallVec::from_vec)?
                 }
             };
 
-            let entry_size = if entry.compression == CompressionType::Encrypted {
-                // If encrypted, the TOC entry size includes the head and fourcc (24 + 4 = 28 bytes)
-                data.len() as u32 + 28
-            } else {
-                data.len() as u32
-            };
+            // Encryption
+            let final_data = if entry.compression == CompressionType::Encrypted {
+                let compressed_len = compressed.len() as u32;
+                let total_size = compressed_len + 28;
 
-            entry_offsets.push((current_offset, entry_size));
-            entry_compressed_data.push(data);
-            current_offset = (current_offset + entry_size + 3) & !3; // Align to 4 bytes
-        }
-
-        // Pass 2: Handle Encryption for Encrypted entries
-        let mut final_entry_data = Vec::with_capacity(self.entries.len());
-        for (i, entry) in self.entries.iter().enumerate() {
-            let compressed = &entry_compressed_data[i];
-            let (offset, total_size) = entry_offsets[i];
-
-            if entry.compression == CompressionType::Encrypted {
-                let checksum = entry.sha1();
-
-                // Forge IV using relative offset (forge_iv adds header base internally)
+                // Forge IV
                 let iv = super::forge_iv(
-                    u64::from(file_count),
-                    u64::from(entry.data.len() as u32),
+                    u64::from(file_count as u32),
+                    u64::from(uncompressed_size),
                     u64::from(total_size),
-                    u64::from(offset),
+                    u64::from(current_offset),
                     self.timestamp,
                 );
 
-                // Build head: 4B fourcc (zeros) + 20B checksum
-                let mut head = Vec::with_capacity(24);
-                head.extend_from_slice(&[0u8; 4]);
-                head.extend_from_slice(&checksum);
+                // Build and Encrypt Head
+                let mut head = [0u8; 24]; // Use a fixed array on the stack!
+                head[4..24].copy_from_slice(&checksum);
 
-                // Encrypt head with signature key
-                let mut head_enc = Vec::new();
-                let mut head_writer = CryptoWriter::new(
-                    &mut head_enc,
-                    BlowfishPS3::new(&self.signature_key.into(), &iv.into()),
-                );
-                head_writer.write_all(&head)?;
-                drop(head_writer);
+                let mut head_enc = [0u8; 24];
+                let mut head_cipher = BlowfishPS3::new(&self.signature_key.into(), &iv.into());
+                // apply_keystream is in-place, much faster than CryptoWriter for fixed sizes
+                head_enc.copy_from_slice(&head);
+                head_cipher.apply_keystream(&mut head_enc);
 
-                // Encrypt body with default_key using IV + 3
-                let mut iv_as_u64 = u64::from_be_bytes(iv);
-                iv_as_u64 = iv_as_u64.wrapping_add(3);
-                let iv_body = iv_as_u64.to_be_bytes();
+                // Prepare Body IV
+                let iv_as_u64 = u64::from_be_bytes(iv);
+                let iv_body = iv_as_u64.wrapping_add(3).to_be_bytes();
 
-                let mut body_enc = Vec::new();
-                let mut body_writer = CryptoWriter::new(
-                    &mut body_enc,
-                    BlowfishPS3::new(&self.archive_key.into(), &iv_body.into()),
-                );
-                body_writer.write_all(compressed)?;
-                drop(body_writer);
+                // Encrypt Body
+                let mut body_enc = compressed; // Take ownership of the compressed SmallVec
+                let mut body_cipher = BlowfishPS3::new(&self.archive_key.into(), &iv_body.into());
+                body_cipher.apply_keystream(&mut body_enc);
 
-                // Compose final data: head_enc (24B), body_fourcc (4B zeros), body_enc
-                let mut final_data = Vec::with_capacity(28 + body_enc.len());
-                final_data.extend_from_slice(&head_enc);
-                final_data.extend_from_slice(&[0u8; 4]); // body_fourcc
-                final_data.extend_from_slice(&body_enc);
-                final_entry_data.push(final_data);
+                // Compose Final Data (Stack + Heap hybrid)
+                let mut composed = SmallVec::with_capacity(28 + body_enc.len());
+                composed.extend_from_slice(&head_enc);
+                composed.extend_from_slice(&[0u8; 4]);
+                composed.extend_from_slice(&body_enc);
+                composed
             } else {
-                final_entry_data.push(compressed.clone());
-            }
+                compressed // No encryption, just pass the SmallVec through
+            };
+
+            let entry_size = final_data.len() as u32;
+            entry_offsets.push((current_offset, entry_size));
+            final_entry_data.push(final_data);
+
+            current_offset = (current_offset + entry_size + 3) & !3;
         }
 
         // Build archive structure for TOC
@@ -192,7 +182,7 @@ impl BarBuilder {
             archive_data: BarArchiveData {
                 priority: self.priority,
                 timestamp: self.timestamp,
-                file_count,
+                file_count: file_count as u32,
             },
             entries: self
                 .entries

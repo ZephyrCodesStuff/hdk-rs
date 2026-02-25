@@ -6,6 +6,7 @@ use flate2::write::ZlibEncoder;
 use hdk_comp::zlib::writer::SegmentedZlibWriter;
 use hdk_secure::{hash::AfsHash, modes::XteaPS3};
 use rand::Rng;
+use smallvec::SmallVec;
 
 use super::structs::{SharcArchive, SharcArchiveData, SharcArchiveMeta, SharcEntry};
 use crate::structs::{ArchiveFlags, CompressionType};
@@ -23,9 +24,10 @@ pub struct SharcBuilder {
     flags: ArchiveFlags,
 }
 
+#[derive(Debug)]
 struct SharcBuilderEntry {
     name_hash: AfsHash,
-    data: Vec<u8>,
+    data: SmallVec<[u8; 16_384]>, // Use SmallVec to avoid heap allocation for small files
     uncompressed_size: u32,
 
     /// Compression type to use for this entry (affects how data is stored in the archive).
@@ -72,14 +74,18 @@ impl SharcBuilder {
     ///
     /// The data will be compressed during `build()` according to the specified compression type.
     /// For parallel compression outside the library, use `compress_data()` then `add_compressed_entry()`.
-    pub fn add_entry(
+    pub fn add_entry<D>(
         &mut self,
         name_hash: AfsHash,
-        data: Vec<u8>,
+        data: D,
         compression: CompressionType,
         iv: [u8; 8],
-    ) {
+    ) where
+        D: Into<SmallVec<[u8; 16_384]>>,
+    {
+        let data: SmallVec<[u8; 16_384]> = data.into();
         let uncompressed_size = data.len() as u32;
+
         self.entries.push(SharcBuilderEntry {
             name_hash,
             data,
@@ -93,17 +99,19 @@ impl SharcBuilder {
     /// Add an entry with data that has already been compressed externally.
     ///
     /// Use this with `compress_data()` to handle compression in parallel (e.g., with rayon).
-    pub fn add_compressed_entry(
+    pub fn add_compressed_entry<D>(
         &mut self,
         name_hash: AfsHash,
-        compressed_data: Vec<u8>,
+        compressed_data: D,
         uncompressed_size: u32,
         compression: CompressionType,
         iv: [u8; 8],
-    ) {
+    ) where
+        D: Into<SmallVec<[u8; 16_384]>>,
+    {
         self.entries.push(SharcBuilderEntry {
             name_hash,
-            data: compressed_data,
+            data: compressed_data.into(),
             uncompressed_size,
             compression,
             pre_compressed: true,
@@ -120,7 +128,7 @@ impl SharcBuilder {
         data: &[u8],
         compression: CompressionType,
         iv: &[u8; 8],
-    ) -> std::io::Result<Vec<u8>> {
+    ) -> std::io::Result<SmallVec<[u8; 16_384]>> {
         Self::compress_entry(data, compression, &self.files_key, iv)
     }
 
@@ -130,20 +138,20 @@ impl SharcBuilder {
         compression: CompressionType,
         key: &[u8; 16],
         iv: &[u8; 8],
-    ) -> std::io::Result<Vec<u8>> {
+    ) -> std::io::Result<SmallVec<[u8; 16_384]>> {
         match compression {
-            CompressionType::None => Ok(data.to_vec()),
+            CompressionType::None => Ok(SmallVec::from_slice(data)),
 
             CompressionType::ZLib => {
                 let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
                 encoder.write_all(data)?;
-                encoder.finish()
+                encoder.finish().map(SmallVec::from_vec)
             }
 
             CompressionType::EdgeZLib => {
                 let mut encoder = SegmentedZlibWriter::new(Vec::new());
                 encoder.write_all(data)?;
-                encoder.finish()
+                encoder.finish().map(SmallVec::from_vec)
             }
 
             CompressionType::Encrypted => {
@@ -156,7 +164,7 @@ impl SharcBuilder {
                 let mut cipher = XteaPS3::new(key.into(), iv.into());
                 cipher.apply_keystream(&mut compressed);
 
-                Ok(compressed)
+                Ok(compressed.into())
             }
         }
     }
@@ -186,13 +194,13 @@ impl SharcBuilder {
         // Calculate offsets for all entries (aligned to 4 bytes)
         let mut entry_offsets = Vec::new();
         let mut current_offset = 0u32;
-        let compressed: Vec<Vec<u8>> = self
+        let compressed: Vec<SmallVec<[u8; 16_384]>> = self
             .entries
-            .iter()
+            .iter_mut()
             .map(|entry| {
                 let data = if entry.pre_compressed {
                     // Data is already compressed, use as-is
-                    entry.data.clone()
+                    std::mem::take(&mut entry.data)
                 } else {
                     // Compress according to the specified compression type
                     Self::compress_entry(&entry.data, entry.compression, &self.files_key, &entry.iv)
@@ -245,9 +253,10 @@ impl SharcBuilder {
             writer.write_all(&entry)?;
 
             // Write padding to align to next 4-byte boundary
+            let padding = [0u8; 3];
             let padding_needed = (4 - (entry.len() % 4)) % 4;
             if padding_needed > 0 {
-                writer.write_all(&vec![0u8; padding_needed])?;
+                writer.write_all(&padding[..padding_needed])?;
             }
         }
 

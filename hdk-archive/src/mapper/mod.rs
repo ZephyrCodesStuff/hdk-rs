@@ -341,7 +341,7 @@ impl Mapper {
                 input_folder
                     .parent()
                     .unwrap()
-                    .join(format!("{folder_name}_mapped"))
+                    .join(self.output_folder.clone().unwrap_or_else(|| format!("{}_mapped", folder_name).into()))
             });
 
         // 6. Parallel Mapping (File Copy) Phase

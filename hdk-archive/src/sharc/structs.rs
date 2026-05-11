@@ -167,8 +167,18 @@ impl SharcArchive {
             Ok(data) => Ok(data),
             Err(e) => {
                 if entry.compressed_size == entry.uncompressed_size + 4 {
-                    // Mislabeled plaintext fallback: simply return the compressed data
-                    Ok(compressed)
+                    // Mislabeled entry: assume it's not compressed.
+                    if comp_type == CompressionType::Encrypted {
+                        // If it's encrypted, decrypt it but don't decompress
+                        let cipher = XteaPS3::new(&key.into(), &iv.into());
+                        let mut decrypted_reader = CryptoReader::new(&compressed[..], cipher);
+                        let mut decrypted = Vec::new();
+                        decrypted_reader.read_to_end(&mut decrypted)?;
+                        Ok(decrypted)
+                    } else {
+                        // If it's not encrypted, it's just plaintext
+                        Ok(compressed)
+                    }
                 } else {
                     Err(e)
                 }

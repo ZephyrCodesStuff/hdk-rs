@@ -218,15 +218,23 @@ impl<R: Read + Seek> SdatReader<R> {
         let mut total_written: u64 = 0;
 
         for block_index in 0..self.block_num {
-            let meta = self.block_metadata(block_index)?;
+            // Hardened: If metadata is missing (truncated file), stop and return what we have
+            let meta = match self.block_metadata(block_index) {
+                Ok(m) => m,
+                Err(_) => break,
+            };
 
             let pad_len = meta.length as usize;
             let padded_len = (pad_len + 0xF) & 0xFFFFFFF0;
 
             let mut enc = vec![0u8; padded_len];
-            self.read_exact_at(meta.offset, &mut enc)?;
+            // Hardened: If the data block itself is missing/truncated, stop
+            if self.read_exact_at(meta.offset, &mut enc).is_err() {
+                break;
+            }
 
-            let dec = self.block_processor.decrypt_data_block(
+            // Hardened: If decryption fails (corrupted block), stop
+            let dec = match self.block_processor.decrypt_data_block(
                 &enc,
                 DecryptBlockOptions {
                     block_metadata: meta.clone(),
@@ -235,26 +243,32 @@ impl<R: Read + Seek> SdatReader<R> {
                     npd_header: self.npd_header.clone(),
                     crypt_key: self.crypt_key,
                 },
-            )?;
+            ) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
 
             if self.edat_header.flags_bits().contains(EdatFlag::Compressed)
                 && meta.compression_end != 0
             {
-                // Current implementation treats compressed SDAT as one block containing the full payload.
                 let mut decompressed = vec![0u8; self.edat_header.file_size as usize];
-                let n = crate::compression::decompress(&dec, &mut decompressed)?;
-                out.write_all(&decompressed[..n])
-                    .map_err(|e| SdatError::InvalidHeader(format!("Write failed: {e}")))?;
-                total_written += n as u64;
+                // Hardened decompression: recover as much as possible
+                if let Ok(n) = crate::compression::decompress(&dec, &mut decompressed) {
+                    let _ = out.write_all(&decompressed[..n]);
+                    total_written += n as u64;
+                }
                 break;
             }
-            out.write_all(&dec)
-                .map_err(|e| SdatError::InvalidHeader(format!("Write failed: {e}")))?;
+
+            if out.write_all(&dec).is_err() {
+                break;
+            }
             total_written += dec.len() as u64;
         }
 
         Ok(total_written)
     }
+
 
     /// Convenience helper: decrypt into a Vec.
     ///

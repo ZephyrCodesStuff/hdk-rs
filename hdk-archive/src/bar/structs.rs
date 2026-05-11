@@ -151,24 +151,31 @@ impl BarArchive {
 
                 let seg = SegmentedZlibReader::new(Cursor::new(actual_body.to_vec()));
                 let mut decompressed = Vec::new();
-                BufReader::new(seg).read_to_end(&mut decompressed)?;
+                let _ = BufReader::new(seg).read_to_end(&mut decompressed);
                 decompressed
             }
             CompressionType::EdgeZLib => {
                 let seg = SegmentedZlibReader::new(Cursor::new(compressed));
                 let mut decompressed = Vec::new();
-                BufReader::new(seg).read_to_end(&mut decompressed)?;
+                let _ = BufReader::new(seg).read_to_end(&mut decompressed);
                 decompressed
             }
             CompressionType::ZLib => {
                 let decoder = ZlibDecoder::new(&compressed[..]);
                 let mut decompressed = Vec::new();
-                BufReader::new(decoder).read_to_end(&mut decompressed)?;
+                let _ = BufReader::new(decoder).read_to_end(&mut decompressed);
                 decompressed
             }
             CompressionType::None => compressed,
         };
-        
+
+        if decompressed.is_empty() && entry.uncompressed_size > 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Decompression failed or returned no data",
+            ));
+        }
+
         Ok(decompressed)
     }
 }

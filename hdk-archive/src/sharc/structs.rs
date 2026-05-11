@@ -139,21 +139,19 @@ impl SharcArchive {
         let iv = entry.iv;
 
         // Decompress based on type
-        let decompressed = match comp_type {
-            CompressionType::None => compressed,
+        let result = match comp_type {
+            CompressionType::None => return Ok(compressed),
             
             CompressionType::ZLib => {
                 let decoder = ZlibDecoder::new(&compressed[..]);
                 let mut decompressed = Vec::new();
-                BufReader::new(decoder).read_to_end(&mut decompressed)?;
-                decompressed
+                BufReader::new(decoder).read_to_end(&mut decompressed).map(|_| decompressed)
             }
             
             CompressionType::EdgeZLib => {
                 let mut decoder = SegmentedZlibReader::new(&compressed[..]);
                 let mut decompressed = Vec::new();
-                decoder.read_to_end(&mut decompressed)?;
-                decompressed
+                decoder.read_to_end(&mut decompressed).map(|_| decompressed)
             }
             
             CompressionType::Encrypted => {
@@ -161,11 +159,20 @@ impl SharcArchive {
                 let decrypted = CryptoReader::new(&compressed[..], cipher);
                 let mut decoder = SegmentedZlibReader::new(BufReader::new(decrypted));
                 let mut decompressed = Vec::new();
-                decoder.read_to_end(&mut decompressed)?;
-                decompressed
+                decoder.read_to_end(&mut decompressed).map(|_| decompressed)
             }
         };
-        
-        Ok(decompressed)
+
+        match result {
+            Ok(data) => Ok(data),
+            Err(e) => {
+                if entry.compressed_size == entry.uncompressed_size + 4 {
+                    // Mislabeled plaintext fallback: simply return the compressed data
+                    Ok(compressed)
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 }

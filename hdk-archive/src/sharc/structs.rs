@@ -14,7 +14,7 @@ use crate::structs::{ArchiveVersion, CompressionType};
 #[brw(magic = 0xADEF17E1u32)] // For LE this will expect 0xE117EFAD, but binrw will handle that for us based on endianness
 #[br(import(archive_key: [u8; 32], archive_size: u32))]
 #[bw(import(archive_key: [u8; 32]))]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SharcArchive {
     // Magic is 4 bytes and is either ADEF17E1 for BE or E117EFAD for LE
 
@@ -61,7 +61,7 @@ pub struct SharcArchiveMeta {
 }
 
 #[binrw]
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct SharcArchiveData {
     /// Archives don't retain file paths, which means there might be collisions.
     /// 
@@ -82,7 +82,7 @@ pub struct SharcArchiveData {
 
 #[binrw]
 #[br(import(archive_size: u32, data_start_pos: u64))]
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct SharcEntry {
     pub name_hash: AfsHash,
 

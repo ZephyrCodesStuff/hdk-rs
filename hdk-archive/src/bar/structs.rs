@@ -13,7 +13,7 @@ use crate::structs::{ArchiveVersion, CompressionType};
 #[brw(magic = 0xADEF17E1u32)] // For LE this will expect 0xE117EFAD, but binrw will handle that for us based on endianness
 #[br(import(archive_key: [u8; 32], signature_key: [u8; 32], archive_size: u32))]
 #[bw(import(archive_key: [u8; 32], signature_key: [u8; 32]))]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BarArchive {
     // Version and Flags are a packed u32 where the upper 16 bits are version and lower 16 bits are flags.
     pub archive_info: BarArchiveMeta,
@@ -42,7 +42,7 @@ pub struct BarArchiveMeta {
 }
 
 #[binrw]
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct BarArchiveData {
     /// Archives don't retain file paths, which means there might be collisions.
     /// 
@@ -60,7 +60,7 @@ pub struct BarArchiveData {
 
 #[binrw]
 #[br(import(timestamp: i32, num_files: u32, data_start_pos: u64, archive_size: u32))]
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct BarEntry {
     pub name_hash: AfsHash,
 

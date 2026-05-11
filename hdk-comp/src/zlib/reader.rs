@@ -34,9 +34,13 @@ impl<R: Read> SegmentedZlibReader<R> {
         let src_size = header_slice.read_u16::<BigEndian>()? as usize;
         let comp_size = header_slice.read_u16::<BigEndian>()? as usize;
 
-        // Read the chunk body
-        let mut chunk_data = vec![0u8; comp_size];
-        self.inner.read_exact(&mut chunk_data)?;
+        // Read the chunk body (up to comp_size)
+        let mut chunk_data = Vec::with_capacity(comp_size);
+        self.inner.by_ref().take(comp_size as u64).read_to_end(&mut chunk_data)?;
+
+        if chunk_data.is_empty() && src_size != 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Empty chunk"));
+        }
 
         self.current_chunk.clear();
         self.cursor = 0;
@@ -54,7 +58,8 @@ impl<R: Read> SegmentedZlibReader<R> {
                 
                 let no_header = Decompress::new(false);
                 let mut decoder = ZlibDecoder::new_with_decompress(&chunk_data[..], no_header);
-                decoder.read_to_end(&mut self.current_chunk)?;
+                // Hardened reading: read as much as possible
+                let _ = decoder.read_to_end(&mut self.current_chunk);
             }
 
             #[cfg(feature = "isal")]

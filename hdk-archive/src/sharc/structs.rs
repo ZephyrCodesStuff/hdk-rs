@@ -139,19 +139,21 @@ impl SharcArchive {
         let iv = entry.iv;
 
         // Decompress based on type
-        let result = match comp_type {
-            CompressionType::None => return Ok(compressed),
+        let decompressed = match comp_type {
+            CompressionType::None => compressed,
             
             CompressionType::ZLib => {
                 let decoder = ZlibDecoder::new(&compressed[..]);
                 let mut decompressed = Vec::new();
-                BufReader::new(decoder).read_to_end(&mut decompressed).map(|_| decompressed)
+                let _ = BufReader::new(decoder).read_to_end(&mut decompressed);
+                decompressed
             }
             
             CompressionType::EdgeZLib => {
                 let mut decoder = SegmentedZlibReader::new(&compressed[..]);
                 let mut decompressed = Vec::new();
-                decoder.read_to_end(&mut decompressed).map(|_| decompressed)
+                let _ = decoder.read_to_end(&mut decompressed);
+                decompressed
             }
             
             CompressionType::Encrypted => {
@@ -159,30 +161,18 @@ impl SharcArchive {
                 let decrypted = CryptoReader::new(&compressed[..], cipher);
                 let mut decoder = SegmentedZlibReader::new(BufReader::new(decrypted));
                 let mut decompressed = Vec::new();
-                decoder.read_to_end(&mut decompressed).map(|_| decompressed)
+                let _ = decoder.read_to_end(&mut decompressed);
+                decompressed
             }
         };
-
-        match result {
-            Ok(data) => Ok(data),
-            Err(e) => {
-                if entry.compressed_size == entry.uncompressed_size + 4 {
-                    // Mislabeled entry: assume it's not compressed.
-                    if comp_type == CompressionType::Encrypted {
-                        // If it's encrypted, decrypt it but don't decompress
-                        let cipher = XteaPS3::new(&key.into(), &iv.into());
-                        let mut decrypted_reader = CryptoReader::new(&compressed[..], cipher);
-                        let mut decrypted = Vec::new();
-                        decrypted_reader.read_to_end(&mut decrypted)?;
-                        Ok(decrypted)
-                    } else {
-                        // If it's not encrypted, it's just plaintext
-                        Ok(compressed)
-                    }
-                } else {
-                    Err(e)
-                }
-            }
+        
+        if decompressed.is_empty() && entry.uncompressed_size > 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Decompression failed or returned no data",
+            ));
         }
+        
+        Ok(decompressed)
     }
 }

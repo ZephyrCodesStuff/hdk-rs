@@ -403,7 +403,7 @@ pub fn compress(_input: &[u8], _output: &mut [u8]) -> Result<usize, CompressionE
 
 /// Check if data appears to be compressed based on header
 #[must_use] 
-pub fn is_compressed(data: &[u8]) -> bool {
+pub const fn is_compressed(data: &[u8]) -> bool {
     if data.is_empty() {
         return false;
     }

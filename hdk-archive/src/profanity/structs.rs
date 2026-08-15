@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-fn default_version() -> u32 {
+const fn default_version() -> u32 {
     4
 }
 
-fn default_flags() -> u32 {
+const fn default_flags() -> u32 {
     3
 }
 

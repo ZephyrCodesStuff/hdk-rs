@@ -297,7 +297,7 @@ pub fn build_profanity_binary(
     // Convert buffer to 32-bit big-endian words
     let num_words = buffer.len() / 4;
     let mut words = vec![0u32; num_words];
-    for (i, chunk) in buffer.chunks_exact(4).enumerate() {
+    for (i, chunk) in buffer.as_chunks::<4>().0.iter().enumerate() {
         words[i] = BigEndian::read_u32(chunk);
     }
 
@@ -319,7 +319,7 @@ pub fn parse_profanity_binary(
     raw_data: &[u8],
     key: Option<[u32; 4]>,
 ) -> Result<ProfanityDictionary, ProfanityError> {
-    if raw_data.len() < 56 || raw_data.len() % 4 != 0 {
+    if raw_data.len() < 56 || !raw_data.len().is_multiple_of(4) {
         return Err(ProfanityError::BufferTooSmall(raw_data.len()));
     }
 
@@ -328,7 +328,7 @@ pub fn parse_profanity_binary(
     // Read words as Big-Endian
     let num_words = raw_data.len() / 4;
     let mut words = vec![0u32; num_words];
-    for (i, chunk) in raw_data.chunks_exact(4).enumerate() {
+    for (i, chunk) in raw_data.as_chunks::<4>().0.iter().enumerate() {
         words[i] = BigEndian::read_u32(chunk);
     }
 

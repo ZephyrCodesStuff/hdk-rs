@@ -113,7 +113,12 @@ impl CryptoContext {
 
         let mut prev_ciphertext = *Block::from_slice(iv);
 
-        for (input_chunk, output_chunk) in input.chunks_exact(16).zip(output.chunks_exact_mut(16)) {
+        for (input_chunk, output_chunk) in input
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .zip(output.as_chunks_mut::<16>().0)
+        {
             let current_ciphertext = *Block::from_slice(input_chunk);
             let mut block = current_ciphertext;
 
@@ -176,7 +181,12 @@ impl CryptoContext {
 
         let mut prev_ciphertext = *Block::from_slice(iv);
 
-        for (input_chunk, output_chunk) in input.chunks_exact(16).zip(output.chunks_exact_mut(16)) {
+        for (input_chunk, output_chunk) in input
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .zip(output.as_chunks_mut::<16>().0)
+        {
             let mut block = Block::default();
 
             // XOR input with previous ciphertext block (CBC mode)

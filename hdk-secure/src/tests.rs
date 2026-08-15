@@ -481,7 +481,7 @@ mod blowfish_tests {
 
         let mut data = b"XXTEA encryption test data buffer for hdk-secure".to_vec();
         // Pad to 4 bytes
-        while data.len() % 4 != 0 {
+        while !data.len().is_multiple_of(4) {
             data.push(0);
         }
         let original = data.clone();

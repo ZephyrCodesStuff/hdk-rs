@@ -26,7 +26,7 @@ impl KeySizeUser for Xxtea {
 impl KeyInit for Xxtea {
     fn new(key: &GenericArray<u8, Self::KeySize>) -> Self {
         let mut k = [0u32; 4];
-        for (i, chunk) in key.chunks_exact(4).enumerate() {
+        for (i, chunk) in key.as_chunks::<4>().0.iter().enumerate() {
             k[i] = LittleEndian::read_u32(chunk);
         }
         Self { key: k }
@@ -60,12 +60,12 @@ impl Xxtea {
 
     /// Decrypt a byte slice in place (must be a multiple of 4 bytes with length >= 8).
     pub fn decrypt_bytes(&self, data: &mut [u8]) -> Result<(), &'static str> {
-        if data.len() < 8 || data.len() % 4 != 0 {
+        if data.len() < 8 || !data.len().is_multiple_of(4) {
             return Err("Data length must be a multiple of 4 bytes and at least 8 bytes");
         }
         let num_words = data.len() / 4;
         let mut words = vec![0u32; num_words];
-        for (i, chunk) in data.chunks_exact(4).enumerate() {
+        for (i, chunk) in data.as_chunks::<4>().0.iter().enumerate() {
             words[i] = LittleEndian::read_u32(chunk);
         }
         self.decrypt(&mut words);
@@ -77,12 +77,12 @@ impl Xxtea {
 
     /// Encrypt a byte slice in place (must be a multiple of 4 bytes with length >= 8).
     pub fn encrypt_bytes(&self, data: &mut [u8]) -> Result<(), &'static str> {
-        if data.len() < 8 || data.len() % 4 != 0 {
+        if data.len() < 8 || !data.len().is_multiple_of(4) {
             return Err("Data length must be a multiple of 4 bytes and at least 8 bytes");
         }
         let num_words = data.len() / 4;
         let mut words = vec![0u32; num_words];
-        for (i, chunk) in data.chunks_exact(4).enumerate() {
+        for (i, chunk) in data.as_chunks::<4>().0.iter().enumerate() {
             words[i] = LittleEndian::read_u32(chunk);
         }
         self.encrypt(&mut words);
@@ -166,7 +166,7 @@ pub fn decrypt_words(v: &mut [u32], key: &[u32; 4]) {
 
         let z = v[n - 1];
         let mx = ((z >> 5 ^ y.wrapping_shl(2)).wrapping_add((y >> 3) ^ z.wrapping_shl(4)))
-            ^ (total ^ y).wrapping_add(key[0 ^ e] ^ z);
+            ^ (total ^ y).wrapping_add(key[e] ^ z);
         v[0] = v[0].wrapping_sub(mx);
         y = v[0];
 

@@ -196,7 +196,7 @@ impl EdatHeader {
     pub const SDAT_FLAG: u32 = 0x01000000;
 
     /// Parse EDAT header from byte buffer
-    pub fn parse(buffer: &[u8]) -> Result<Self, SdatError> {
+    pub const fn parse(buffer: &[u8]) -> Result<Self, SdatError> {
         if buffer.len() < Self::SIZE {
             return Err(SdatError::MemoryError(MemoryError::BufferUnderflow {
                 requested: Self::SIZE,

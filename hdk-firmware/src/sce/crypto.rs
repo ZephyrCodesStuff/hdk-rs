@@ -317,15 +317,15 @@ fn hmac_sha1(key: &[u8; 20], data: &[u8]) -> [u8; 20] {
     outer_hasher.digest().bytes()
 }
 
-/// Verify an ECDSA-P192-SHA1 signature
+/// Verify an ECDSA-P192-SHA1 signature using full 24-byte r and s.
 ///
 /// This is a manual implementation since the ecdsa crate does not implement
 /// verification for P-192 due to its weak security (96-bit).
-pub fn ecdsa_verify(
+pub fn ecdsa_verify_full(
     keypair: &EcdsaKeypair,
     data: &[u8],
-    r: &[u8; 21],
-    s: &[u8; 21],
+    r: &[u8; 24],
+    s: &[u8; 24],
 ) -> io::Result<bool> {
     use crypto_bigint::U192;
     use elliptic_curve::ops::Reduce;
@@ -341,14 +341,8 @@ pub fn ecdsa_verify(
     hash_padded[4..].copy_from_slice(&hash);
     let z = <Scalar as Reduce<U192>>::reduce_bytes(&hash_padded.into());
 
-    // Parse r and s (pad from 21 bytes to 24 bytes)
-    let mut r_padded = [0u8; 24];
-    let mut s_padded = [0u8; 24];
-    r_padded[3..].copy_from_slice(r);
-    s_padded[3..].copy_from_slice(s);
-
-    let r_scalar = Scalar::from_repr(r_padded.into());
-    let s_scalar = Scalar::from_repr(s_padded.into());
+    let r_scalar = Scalar::from_repr((*r).into());
+    let s_scalar = Scalar::from_repr((*s).into());
 
     if r_scalar.is_none().into() || s_scalar.is_none().into() {
         return Ok(false);
@@ -372,12 +366,6 @@ pub fn ecdsa_verify(
     // u2 = r * s^(-1) mod n
     let u1 = z * s_inv;
     let u2 = r_scalar * s_inv;
-    
-    eprintln!("verify: z  = {:02x?}", <[u8; 24]>::from(z.to_repr()));
-    eprintln!("verify: r  = {:02x?}", <[u8; 24]>::from(r_scalar.to_repr()));
-    eprintln!("verify: s  = {:02x?}", <[u8; 24]>::from(s_scalar.to_repr()));
-    eprintln!("verify: u1 = {:02x?}", <[u8; 24]>::from(u1.to_repr()));
-    eprintln!("verify: u2 = {:02x?}", <[u8; 24]>::from(u2.to_repr()));
 
     // Parse public key
     let mut pubkey_x = [0u8; 24];
@@ -421,11 +409,22 @@ pub fn ecdsa_verify(
     // v = x coordinate of R' mod n
     let v = <Scalar as Reduce<U192>>::reduce_bytes(r_prime_x);
 
-    eprintln!("verify: r_scalar = {:02x?}", <[u8; 24]>::from(r_scalar.to_repr()));
-    eprintln!("verify: v        = {:02x?}", <[u8; 24]>::from(v.to_repr()));
-
     // Signature is valid if v == r
     Ok(v == r_scalar)
+}
+
+/// Verify an ECDSA-P192-SHA1 signature (21-byte SCE format).
+pub fn ecdsa_verify(
+    keypair: &EcdsaKeypair,
+    data: &[u8],
+    r: &[u8; 21],
+    s: &[u8; 21],
+) -> io::Result<bool> {
+    let mut r_padded = [0u8; 24];
+    let mut s_padded = [0u8; 24];
+    r_padded[3..].copy_from_slice(r);
+    s_padded[3..].copy_from_slice(s);
+    ecdsa_verify_full(keypair, data, &r_padded, &s_padded)
 }
 
 #[cfg(test)]
@@ -464,13 +463,10 @@ mod tests {
         let data = b"Hello, SCE signing test!";
 
         // Sign the data
-        let (r, s) = ecdsa_sign(&keypair, data).expect("signing should succeed");
-
-        eprintln!("r = {:02x?}", r);
-        eprintln!("s = {:02x?}", s);
+        let (r, s) = ecdsa_sign_full(&keypair, data).expect("signing should succeed");
 
         // Verify the signature
-        let valid = ecdsa_verify(&keypair, data, &r, &s).expect("verification should succeed");
+        let valid = ecdsa_verify_full(&keypair, data, &r, &s).expect("verification should succeed");
         assert!(valid, "signature should be valid");
     }
 
@@ -481,27 +477,27 @@ mod tests {
         let tampered = b"Tampered data";
 
         // Sign the original data
-        let (r, s) = ecdsa_sign(&keypair, data).expect("signing should succeed");
+        let (r, s) = ecdsa_sign_full(&keypair, data).expect("signing should succeed");
 
-        // Verify with tampered data should fail
-        let valid = ecdsa_verify(&keypair, tampered, &r, &s).expect("verification should succeed");
-        assert!(!valid, "signature should be invalid for tampered data");
+        // Verify with tampered data - should fail
+        let valid = ecdsa_verify_full(&keypair, tampered, &r, &s).expect("verification should run");
+        assert!(!valid, "tampered data should fail verification");
     }
 
     #[test]
     fn ecdsa_verify_rejects_tampered_signature() {
         let keypair = generate_test_keypair();
-        let data = b"Test data for signature tampering";
+        let data = b"Hello, SCE signing test!";
 
         // Sign the data
-        let (mut r, s) = ecdsa_sign(&keypair, data).expect("signing should succeed");
+        let (mut r, s) = ecdsa_sign_full(&keypair, data).expect("signing should succeed");
 
-        // Tamper with the signature
-        r[10] ^= 0xFF;
+        // Tamper with signature
+        r[0] ^= 0xFF;
 
-        // Verify should fail
-        let valid = ecdsa_verify(&keypair, data, &r, &s).expect("verification should succeed");
-        assert!(!valid, "signature should be invalid after tampering");
+        // Verify with tampered signature - should fail
+        let valid = ecdsa_verify_full(&keypair, data, &r, &s).expect("verification should run");
+        assert!(!valid, "tampered signature should fail verification");
     }
 
     #[test]

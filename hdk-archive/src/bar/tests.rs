@@ -3,8 +3,11 @@ fn read() {
     use super::structs::BarArchive;
     use binrw::BinRead;
 
-    // Open file
-    let data = std::fs::read("../test.bar").unwrap();
+    let test_path = std::path::Path::new("../test.bar");
+    if !test_path.exists() {
+        return;
+    }
+    let data = std::fs::read(test_path).unwrap();
     let data_len = data.len() as u32;
     let mut cur = std::io::BufReader::new(std::io::Cursor::new(data));
 

@@ -784,9 +784,12 @@ dependencies = [
  "num_enum",
  "rand",
  "rayon",
+ "serde",
+ "serde_json",
  "sha1",
  "sha1_smol",
  "smallvec",
+ "thiserror",
  "walkdir",
 ]
 

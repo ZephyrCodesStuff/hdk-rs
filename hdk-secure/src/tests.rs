@@ -455,4 +455,58 @@ mod blowfish_tests {
 
         assert_eq!(out, plaintext);
     }
+
+    #[test]
+    fn test_xxtea_roundtrip_words() {
+        use crate::xxtea::{Xxtea, PROFANITY_DICT_KEY};
+
+        let cipher = Xxtea::new_from_words(PROFANITY_DICT_KEY);
+        let mut words = vec![0x12345678, 0x9ABCDEF0, 0xDEADBEEF, 0xCAFEBABE, 0x01020304];
+        let original = words.clone();
+
+        cipher.encrypt(&mut words);
+        assert_ne!(words, original);
+
+        cipher.decrypt(&mut words);
+        assert_eq!(words, original);
+    }
+
+    #[test]
+    fn test_xxtea_roundtrip_bytes() {
+        use crate::xxtea::Xxtea;
+        use cipher::KeyInit;
+
+        let key = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let cipher = Xxtea::new(&key.into());
+
+        let mut data = b"XXTEA encryption test data buffer for hdk-secure".to_vec();
+        // Pad to 4 bytes
+        while data.len() % 4 != 0 {
+            data.push(0);
+        }
+        let original = data.clone();
+
+        cipher.encrypt_bytes(&mut data).unwrap();
+        assert_ne!(data, original);
+
+        cipher.decrypt_bytes(&mut data).unwrap();
+        assert_eq!(data, original);
+    }
+
+    #[test]
+    fn test_xxtea_ps3_words_roundtrip() {
+        use crate::xxtea::{Xxtea, PROFANITY_DICT_KEY};
+
+        let cipher = Xxtea::new_from_words(PROFANITY_DICT_KEY);
+        let mut words = vec![0x00000004, 0x00000003, 0x0000020D, 0x00002723];
+        let original = words.clone();
+
+        // PS3 encrypt: endian swap then encrypt
+        cipher.encrypt_ps3_words(&mut words);
+        assert_ne!(words, original);
+
+        // PS3 decrypt: decrypt then endian swap
+        cipher.decrypt_ps3_words(&mut words);
+        assert_eq!(words, original);
+    }
 }

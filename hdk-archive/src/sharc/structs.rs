@@ -55,7 +55,7 @@ pub struct SharcArchive {
 })]
 #[bw(map = |x: &SharcArchiveMeta| ((x.version as u32) << 16) | (x.flags as u32))]
 pub struct SharcArchiveMeta {
-    #[br(assert(*version == ArchiveVersion::SHARC.into(), "Unsupported SHARC version"))]
+    #[br(assert(*version == u16::from(ArchiveVersion::SHARC), "Unsupported SHARC version"))]
     pub version: u16, // Upper 16 bits
     pub flags: u16,   // Lower 16 bits
 }

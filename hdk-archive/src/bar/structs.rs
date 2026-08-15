@@ -36,7 +36,7 @@ pub struct BarArchive {
 })]
 #[bw(map = |x: &BarArchiveMeta| ((x.version as u32) << 16) | (x.flags as u32))]
 pub struct BarArchiveMeta {
-    #[br(assert(*version == ArchiveVersion::BAR.into(), "Unsupported BAR version"))]
+    #[br(assert(*version == u16::from(ArchiveVersion::BAR), "Unsupported BAR version"))]
     pub version: u16, // Upper 16 bits
     pub flags: u16,   // Lower 16 bits
 }

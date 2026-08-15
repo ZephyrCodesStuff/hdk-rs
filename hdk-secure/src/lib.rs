@@ -7,6 +7,7 @@ pub mod reader;
 pub mod sceneid;
 pub mod writer;
 pub mod xtea;
+pub mod xxtea;
 
 #[cfg(test)]
 mod tests;

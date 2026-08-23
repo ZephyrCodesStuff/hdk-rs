@@ -154,11 +154,34 @@ impl<R: Read + Seek> PkgArchive<R> {
             return Err(PkgError::DataOutOfBounds);
         }
 
-        // ---- metadata section (TLV packets) ----
         let mut metadata = PkgMetadata {
             packets: Vec::new(),
         };
-        if metadata_offset > 0 && metadata_count > 0 {
+        let is_legacy_debug = release_type & 0x8000 == 0
+            && metadata_offset == 0xC0
+            && metadata_size == 0x80
+            && data_offset == 0x140;
+
+        if is_legacy_debug {
+            inner.seek(SeekFrom::Start(metadata_offset as u64))?;
+            let mut fixed = [0u8; 0x40];
+            inner.read_exact(&mut fixed)?;
+
+            let packet = |id, range: std::ops::Range<usize>| PkgMetadataPacket {
+                id,
+                data: fixed[range].to_vec(),
+            };
+            metadata.packets.extend([
+                packet(metadata_id::DRM_TYPE, 0x08..0x0C),
+                packet(metadata_id::CONTENT_TYPE, 0x14..0x18),
+                packet(metadata_id::PACKAGE_TYPE, 0x20..0x24),
+                PkgMetadataPacket {
+                    id: metadata_id::PACKAGE_SIZE,
+                    data: total_size.to_be_bytes().to_vec(),
+                },
+                packet(metadata_id::MAKE_PKG_REV, 0x3C..0x40),
+            ]);
+        } else if metadata_offset > 0 && metadata_count > 0 {
             inner.seek(SeekFrom::Start(metadata_offset as u64))?;
             for _ in 0..metadata_count {
                 let id = inner.read_u32::<BigEndian>()?;

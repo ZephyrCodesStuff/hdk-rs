@@ -32,6 +32,12 @@ use thiserror::Error;
 
 use super::structs::*;
 
+const DEBUG_METADATA_OFFSET: u32 = 0xC0;
+const DEBUG_METADATA_COUNT: u32 = 5;
+const DEBUG_METADATA_SIZE: u32 = 0x80;
+const DEBUG_DATA_OFFSET: u64 = 0x140;
+const DEBUG_TRAILER_SIZE: u64 = 0x60;
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -134,7 +140,7 @@ pub struct PkgBuilder {
     qa_digest: [u8; 16],
     klicensee: [u8; 16],
 
-    // Metadata fields (written as TLV packets in the metadata section)
+    // Metadata fields (fixed record for debug, TLV packets for retail)
     drm_type: u32,
     content_type: u32,
     package_type: u32,
@@ -288,12 +294,9 @@ impl PkgBuilder {
 
     /// Write the complete PKG to the provided writer.
     ///
-    /// This method consumes the builder and writes:
-    /// 1. Main header (0x00–0xBF)
-    /// 2. Metadata section (TLV packets starting at 0xC0)
-    /// 3. Encrypted data area (item table + names + file data)
+    /// Debug packages use the firmware's legacy fixed-metadata/SHA-1 layout;
+    /// finalized retail packages use TLV metadata and AES-CTR payload crypto.
     pub fn write<W: Write + Seek>(self, mut writer: W) -> Result<(), PkgWriteError> {
-        // Validate fields
         if self.content_id.len() > 48 {
             return Err(PkgWriteError::ContentIdTooLong(self.content_id));
         }
@@ -309,11 +312,14 @@ impl PkgBuilder {
             }
         }
 
-        // Warn if PARAM.SFO is missing (required by PS3 hardware)
         if !self.items.iter().any(|i| i.name == "PARAM.SFO") {
             eprintln!(
                 "warning: PKG is missing PARAM.SFO — PS3 hardware requires this file for installation"
             );
+        }
+
+        if self.release_type & 0x8000 == 0 {
+            return self.write_debug(writer);
         }
 
         // Build metadata with placeholder total_size to determine its size
@@ -536,6 +542,201 @@ impl PkgBuilder {
 
     // -- Internal helpers ---------------------------------------------------
 
+    /// Write a debug package in the layout accepted by the firmware verifier.
+    fn write_debug<W: Write + Seek>(self, mut writer: W) -> Result<(), PkgWriteError> {
+        let item_count =
+            u32::try_from(self.items.len()).map_err(|_| PkgWriteError::DataOverflow)?;
+        let entry_table_size = self
+            .items
+            .len()
+            .checked_mul(PKG_FILE_ENTRY_SIZE)
+            .ok_or(PkgWriteError::DataOverflow)?;
+
+        let mut name_offsets = Vec::with_capacity(self.items.len());
+        let mut data_offsets = Vec::with_capacity(self.items.len());
+        let mut data_cursor = entry_table_size;
+
+        for item in &self.items {
+            name_offsets.push(u32::try_from(data_cursor).map_err(|_| PkgWriteError::DataOverflow)?);
+            data_cursor = data_cursor
+                .checked_add(Self::align_16(item.name.len())?)
+                .ok_or(PkgWriteError::DataOverflow)?;
+        }
+
+        let file_desc_length = data_cursor;
+
+        for item in &self.items {
+            data_offsets.push(u64::try_from(data_cursor).map_err(|_| PkgWriteError::DataOverflow)?);
+            if !item.is_directory() {
+                data_cursor = data_cursor
+                    .checked_add(Self::align_16(item.data.len())?)
+                    .ok_or(PkgWriteError::DataOverflow)?;
+            }
+        }
+
+        let data_size = u64::try_from(data_cursor).map_err(|_| PkgWriteError::DataOverflow)?;
+        let total_size = DEBUG_DATA_OFFSET
+            .checked_add(data_size)
+            .and_then(|size| size.checked_add(DEBUG_TRAILER_SIZE))
+            .ok_or(PkgWriteError::DataOverflow)?;
+
+        let mut plaintext = vec![0u8; data_cursor];
+        {
+            let mut cursor = io::Cursor::new(&mut plaintext[..]);
+
+            for (i, item) in self.items.iter().enumerate() {
+                cursor.write_u32::<BigEndian>(name_offsets[i])?;
+                cursor.write_u32::<BigEndian>(item.name.len() as u32)?;
+                cursor.write_u64::<BigEndian>(data_offsets[i])?;
+                cursor.write_u64::<BigEndian>(item.data.len() as u64)?;
+                cursor.write_u32::<BigEndian>(item.flags)?;
+                cursor.write_u32::<BigEndian>(0)?;
+            }
+
+            for (i, item) in self.items.iter().enumerate() {
+                cursor.seek(SeekFrom::Start(name_offsets[i] as u64))?;
+                cursor.write_all(item.name.as_bytes())?;
+            }
+
+            for (i, item) in self.items.iter().enumerate() {
+                if !item.is_directory() {
+                    cursor.seek(SeekFrom::Start(data_offsets[i]))?;
+                    cursor.write_all(&item.data)?;
+                }
+            }
+        }
+
+        // The firmware requires file bytes, the zeroed header, then descriptors and names.
+        let mut header = PkgHeader {
+            magic: PKG_MAGIC,
+            release_type: self.release_type,
+            platform: self.platform,
+            metadata_offset: DEBUG_METADATA_OFFSET,
+            metadata_count: DEBUG_METADATA_COUNT,
+            metadata_size: DEBUG_METADATA_SIZE,
+            item_count,
+            total_size,
+            data_offset: DEBUG_DATA_OFFSET,
+            data_size,
+            content_id: [0; 48],
+            qa_digest: [0; 16],
+            klicensee: [0; 16],
+            header_digest: [0; 64],
+        };
+
+        let qa_digest = if self.qa_digest == [0; 16] {
+            let mut hasher = Sha1::new();
+            for item in &self.items {
+                if !item.is_directory() {
+                    hasher.update(&item.data);
+                }
+            }
+            hasher.update(&Self::serialize_header_fields(&header));
+            hasher.update(&plaintext[..file_desc_length]);
+
+            let hash = hasher.digest().bytes();
+            let mut digest = [0u8; 16];
+            digest.copy_from_slice(&hash[..16]);
+            digest
+        } else {
+            self.qa_digest
+        };
+
+        header.content_id = Self::pad_bytes::<48>(self.content_id.as_bytes());
+        header.qa_digest = qa_digest;
+        header.klicensee = if self.klicensee == [0; 16] {
+            Self::compute_klicensee(&qa_digest)
+        } else {
+            self.klicensee
+        };
+
+        let header_auth = Self::legacy_auth_digest(&Self::serialize_header_fields(&header));
+        let metadata = self.build_legacy_debug_metadata(data_size)?;
+        let metadata_auth = Self::legacy_auth_digest(&metadata);
+
+        let mut metadata_pad = [0u8; 0x30];
+        Self::crypt_debug_stream(&mut metadata_pad, &metadata_auth, 0);
+
+        let mut header_pad = metadata_pad;
+        Self::crypt_debug_stream(&mut header_pad, &header_auth, 0);
+
+        header.header_digest[..0x10].copy_from_slice(&header_auth);
+        header.header_digest[0x10..].copy_from_slice(&header_pad);
+
+        Self::write_header(&mut writer, &header)?;
+        writer.seek(SeekFrom::Start(DEBUG_METADATA_OFFSET as u64))?;
+        writer.write_all(&metadata)?;
+        writer.write_all(&metadata_auth)?;
+        writer.write_all(&metadata_pad)?;
+
+        Self::crypt_debug_stream(&mut plaintext, &qa_digest, 0);
+        writer.seek(SeekFrom::Start(DEBUG_DATA_OFFSET))?;
+        writer.write_all(&plaintext)?;
+        writer.write_all(&[0u8; DEBUG_TRAILER_SIZE as usize])?;
+
+        Ok(())
+    }
+
+    /// Build the fixed 0x40-byte metadata structure used by debug packages.
+    fn build_legacy_debug_metadata(&self, data_size: u64) -> Result<[u8; 0x40], PkgWriteError> {
+        let data_size = u32::try_from(data_size).map_err(|_| PkgWriteError::DataOverflow)?;
+        let mut metadata = [0u8; 0x40];
+        let mut cursor = io::Cursor::new(&mut metadata[..]);
+
+        for (id, value) in [
+            (1, self.drm_type),
+            (2, self.content_type),
+            (3, self.package_type),
+        ] {
+            cursor.write_u32::<BigEndian>(id)?;
+            cursor.write_u32::<BigEndian>(4)?;
+            cursor.write_u32::<BigEndian>(value)?;
+        }
+
+        cursor.write_u32::<BigEndian>(4)?;
+        cursor.write_u32::<BigEndian>(8)?;
+        cursor.write_u16::<BigEndian>(0)?;
+        cursor.write_u16::<BigEndian>(0)?;
+        cursor.write_u32::<BigEndian>(data_size)?;
+        cursor.write_u32::<BigEndian>(5)?;
+        cursor.write_u32::<BigEndian>(4)?;
+        cursor.write_u16::<BigEndian>(self.npdrm_revision)?;
+        cursor.write_u16::<BigEndian>(self.package_version)?;
+
+        Ok(metadata)
+    }
+
+    fn align_16(value: usize) -> Result<usize, PkgWriteError> {
+        value
+            .checked_add(15)
+            .map(|value| value & !15)
+            .ok_or(PkgWriteError::DataOverflow)
+    }
+
+    fn legacy_auth_digest(data: &[u8]) -> [u8; 16] {
+        let hash = Sha1::from(data).digest().bytes();
+        let mut digest = [0u8; 16];
+        digest.copy_from_slice(&hash[3..19]);
+        digest
+    }
+
+    fn crypt_debug_stream(data: &mut [u8], key: &[u8; 16], initial_counter: u64) {
+        let mut sha_input = [0u8; 64];
+        sha_input[0..8].copy_from_slice(&key[0..8]);
+        sha_input[8..16].copy_from_slice(&key[0..8]);
+        sha_input[16..24].copy_from_slice(&key[8..16]);
+        sha_input[24..32].copy_from_slice(&key[8..16]);
+
+        for (index, chunk) in data.chunks_mut(16).enumerate() {
+            let counter = initial_counter.wrapping_add(index as u64);
+            sha_input[56..64].copy_from_slice(&counter.to_be_bytes());
+            let hash = Sha1::from(sha_input).digest().bytes();
+            for (byte, key_byte) in chunk.iter_mut().zip(hash.iter()) {
+                *byte ^= key_byte;
+            }
+        }
+    }
+
     /// Pad a byte slice to a fixed length with NULs.
     fn pad_bytes<const N: usize>(src: &[u8]) -> [u8; N] {
         let mut out = [0u8; N];
@@ -574,25 +775,9 @@ impl PkgBuilder {
         buf
     }
 
-    /// Compute klicensee by encrypting 16 zero bytes with SHA-1 stream cipher.
-    ///
-    /// Uses the QA digest as the key and counter value 0xFFFFFFFFFFFFFFFF.
-    /// This matches the Python reference implementation's behavior.
     fn compute_klicensee(qa_digest: &[u8; 16]) -> [u8; 16] {
-        // Build SHA-1 input template (same format as debug encryption)
-        let mut sha_input = [0u8; 64];
-        sha_input[0..8].copy_from_slice(&qa_digest[0..8]);
-        sha_input[8..16].copy_from_slice(&qa_digest[0..8]);
-        sha_input[16..24].copy_from_slice(&qa_digest[8..16]);
-        sha_input[24..32].copy_from_slice(&qa_digest[8..16]);
-
-        // Set counter to 0xFFFFFFFFFFFFFFFF
-        sha_input[56..64].copy_from_slice(&0xFFFFFFFFFFFFFFFFu64.to_be_bytes());
-
-        // Hash and XOR with zeros (which just returns the hash bytes)
-        let hash = Sha1::from(sha_input).digest().bytes();
         let mut klicensee = [0u8; 16];
-        klicensee.copy_from_slice(&hash[..16]);
+        Self::crypt_debug_stream(&mut klicensee, qa_digest, u64::MAX);
         klicensee
     }
 
@@ -736,12 +921,6 @@ impl PkgBuilder {
         Self::write_metadata_packet(&mut buf, metadata_id::UNK_09, &[0; 8]);
         count += 1;
 
-        // // 0x0A: Install Directory (8-byte prefix + directory name)
-        // let mut install_buf = vec![0u8; 8 + self.install_directory.len()];
-        // install_buf[8..].copy_from_slice(self.install_directory.as_bytes());
-        // Self::write_metadata_packet(&mut buf, metadata_id::INSTALL_DIR, &install_buf);
-        // count += 1;
-
         (buf, count)
     }
 
@@ -759,40 +938,14 @@ impl PkgBuilder {
         }
 
         if header.release_type & 0x8000 != 0 {
-            // Retail / finalized (AES-128-ECB-CTR)
             Self::encrypt_retail(data, header, aes_key);
         } else {
-            // Debug (SHA-1 stream cipher)
             Self::encrypt_debug(data, header);
         }
     }
 
-    /// Debug encryption: SHA-1-based stream cipher keyed on `qa_digest`.
-    ///
-    /// Since XOR is its own inverse, the encryption algorithm is identical
-    /// to decryption.
     fn encrypt_debug(data: &mut [u8], header: &PkgHeader) {
-        let qa = &header.qa_digest;
-
-        // Pre-build the 64-byte SHA-1 input template
-        let mut sha_input = [0u8; 64];
-        sha_input[0..8].copy_from_slice(&qa[0..8]);
-        sha_input[8..16].copy_from_slice(&qa[0..8]);
-        sha_input[16..24].copy_from_slice(&qa[8..16]);
-        sha_input[24..32].copy_from_slice(&qa[8..16]);
-
-        let blocks = data.len().div_ceil(16);
-        for i in 0..blocks {
-            let block_idx = i as u64;
-            sha_input[56..64].copy_from_slice(&block_idx.to_be_bytes());
-            let hash = Sha1::from(sha_input).digest().bytes();
-
-            let start = i * 16;
-            let end = std::cmp::min(start + 16, data.len());
-            for j in start..end {
-                data[j] ^= hash[j - start];
-            }
-        }
+        Self::crypt_debug_stream(data, &header.qa_digest, 0);
     }
 
     /// Retail encryption: AES-128-ECB-CTR with `klicensee` as initial counter.
@@ -859,6 +1012,54 @@ mod tests {
 
         let data = pkg.read_item_data(1).unwrap();
         assert_eq!(data, b"Hello, PKG!");
+    }
+
+    #[test]
+    fn writes_firmware_compatible_debug_auth_blocks() {
+        let mut buf = Vec::new();
+        let mut pkg = PkgBuilder::new()
+            .release_type(PkgReleaseType::Debug)
+            .platform(PkgPlatform::PS3)
+            .content_id("UP0001-TEST00001_00-0000000000000000");
+        pkg.add_file("PARAM.SFO", b"test parameter data".to_vec());
+        pkg.add_directory("USRDIR");
+        pkg.add_file("USRDIR/EBOOT.BIN", vec![0x42; 37]);
+        pkg.write(io::Cursor::new(&mut buf)).unwrap();
+
+        assert_eq!(&buf[0x04..0x08], &[0x00, 0x00, 0x00, 0x01]);
+        assert_eq!(
+            u32::from_be_bytes(buf[0x08..0x0C].try_into().unwrap()),
+            0xC0
+        );
+        assert_eq!(u32::from_be_bytes(buf[0x0C..0x10].try_into().unwrap()), 5);
+        assert_eq!(
+            u32::from_be_bytes(buf[0x10..0x14].try_into().unwrap()),
+            0x80
+        );
+        assert_eq!(
+            u64::from_be_bytes(buf[0x20..0x28].try_into().unwrap()),
+            0x140
+        );
+
+        let declared_size = u64::from_be_bytes(buf[0x18..0x20].try_into().unwrap());
+        let data_size = u64::from_be_bytes(buf[0x28..0x30].try_into().unwrap());
+        assert_eq!(declared_size, buf.len() as u64);
+        assert_eq!(declared_size, 0x140 + data_size + 0x60);
+
+        let header_auth = PkgBuilder::legacy_auth_digest(&buf[..0x80]);
+        assert_eq!(&buf[0x80..0x90], &header_auth);
+
+        let metadata_auth = PkgBuilder::legacy_auth_digest(&buf[0xC0..0x100]);
+        assert_eq!(&buf[0x100..0x110], &metadata_auth);
+
+        let mut metadata_pad = [0u8; 0x30];
+        PkgBuilder::crypt_debug_stream(&mut metadata_pad, &metadata_auth, 0);
+        assert_eq!(&buf[0x110..0x140], &metadata_pad);
+
+        let mut header_pad = metadata_pad;
+        PkgBuilder::crypt_debug_stream(&mut header_pad, &header_auth, 0);
+        assert_eq!(&buf[0x90..0xC0], &header_pad);
+        assert!(buf[buf.len() - 0x60..].iter().all(|&byte| byte == 0));
     }
 
     #[test]

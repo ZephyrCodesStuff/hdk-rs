@@ -232,7 +232,7 @@ impl KeyInit for Blowfish {
 
         // Key schedule initialization
         let mut j = 0;
-        for i in 0..18 {
+        for p in &mut bf.p {
             let key_len = key.len();
 
             let d = u32::from(key[j % key_len]) << 24
@@ -240,7 +240,7 @@ impl KeyInit for Blowfish {
                 | u32::from(key[(j + 2) % key_len]) << 8
                 | u32::from(key[(j + 3) % key_len]);
 
-            bf.p[i] ^= d;
+            *p ^= d;
             j = (j + 4) % key_len;
         }
 

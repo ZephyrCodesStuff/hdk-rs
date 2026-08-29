@@ -7,8 +7,6 @@ extern crate std;
 #[cfg(test)]
 extern crate alloc;
 
-
-
 pub mod blowfish;
 pub mod hash;
 pub mod modes;
@@ -17,6 +15,8 @@ pub mod sceneid;
 pub mod writer;
 pub mod xtea;
 pub mod xxtea;
+pub use cipher;
+
 
 #[cfg(test)]
 mod tests;

@@ -9,7 +9,7 @@ cipher = { version = "0.4", default-features = false }
 ctr = { version = "0.9.2", default-features = false }
 cbc = { version = "0.1", default-features = false }
 ecb = { version = "0.1", default-features = false }
-uuid = { version = "1.19.0", default-features = false, features = ["v4"] }
+uuid = { version = "1.19.0", default-features = false }
 crc16 = { version = "0.4.0", default-features = false }
 rand = { version = "0.9.2", default-features = false }
 hex = { version = "0.4.3", default-features = false }
@@ -26,6 +26,7 @@ std = [
     "rand/std",
     "rand/thread_rng",
     "hex/std",
+    "uuid/v4"
 ]
 simd = []
 

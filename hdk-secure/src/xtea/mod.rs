@@ -10,10 +10,11 @@ use cipher::{
 };
 
 #[cfg(feature = "simd")]
-use std::simd::u32x64;
+use core::simd::u32x64;
 
 #[cfg(feature = "simd")]
 use cipher::consts::U64;
+
 
 pub const ROUNDS: usize = 16;
 

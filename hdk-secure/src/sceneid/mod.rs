@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use core::fmt::{self, Display};
 
 use uuid::Uuid;
 
@@ -23,6 +23,7 @@ pub enum SceneIDError {
     InvalidCRC16,
 }
 
+#[cfg(feature = "std")]
 impl Default for SceneID {
     fn default() -> Self {
         Self::new()
@@ -55,23 +56,28 @@ const UUID_XOR: [u8; 16] = [
 ];
 
 impl SceneID {
-    /// Creates a new random SceneID.
+    /// Creates a new random SceneID using the thread RNG (requires `std`).
+    #[cfg(feature = "std")]
     pub fn new() -> Self {
-        let uuid = Uuid::new_v4();
-        let bytes: &[u8; 14] = &uuid.as_bytes()[0..14].try_into().unwrap();
+        Self::new_with_rng(&mut rand::rng())
+    }
+
+    /// Creates a new random SceneID using the provided random number generator.
+    pub fn new_with_rng<R: rand::Rng + ?Sized>(rng: &mut R) -> Self {
+        let mut bytes = [0u8; 14];
+        rng.fill(&mut bytes);
 
         let mut crc16 = crc16::State::<crc16::AUG_CCITT>::new();
-        crc16.update(bytes);
+        crc16.update(&bytes);
 
-        let final_uuid = &mut [0; 16];
-        final_uuid[0..14].copy_from_slice(bytes);
+        let mut final_uuid = [0u8; 16];
+        final_uuid[0..14].copy_from_slice(&bytes);
         final_uuid[14..16].copy_from_slice(&crc16.get().to_le_bytes());
 
         Self {
-            src_bytes: *bytes,
+            src_bytes: bytes,
             crc16: crc16.get(),
-
-            final_id: Uuid::from_slice(final_uuid).unwrap(),
+            final_id: Uuid::from_slice(&final_uuid).unwrap(),
         }
     }
 
@@ -120,13 +126,22 @@ impl SceneID {
         Self::verify(uuid.as_bytes())
     }
 
-    /// Forges a SceneID that maps to the given target u16.
+    /// Forges a SceneID that maps to the given target u16 using the thread RNG (requires `std`).
     /// If target_crc is None, a random valid CRC16 will be generated.
+    #[cfg(feature = "std")]
     pub fn forge(target: u16, target_crc: Option<u16>) -> Self {
-        use rand::Rng;
+        Self::forge_with_rng(target, target_crc, &mut rand::rng())
+    }
 
-        let mut rng = rand::rng();
+    /// Forges a SceneID that maps to the given target u16 using the provided random number generator.
+    /// If target_crc is None, a random valid CRC16 will be generated.
+    pub fn forge_with_rng<R: rand::Rng + ?Sized>(
+        target: u16,
+        target_crc: Option<u16>,
+        rng: &mut R,
+    ) -> Self {
         let target_byte1 = (target & 0xFF) as u8;
+
         let target_byte2 = ((target >> 8) & 0xFF) as u8;
 
         // Try to find an index where we can control the CRC positions if needed
@@ -189,6 +204,7 @@ impl SceneID {
         panic!("Failed to forge SceneID with target {target}");
     }
 
+
     /// Attempts to adjust two bytes in uuid_bytes to achieve the target CRC16,
     /// avoiding modifications to the bytes at exclude_positions.
     ///
@@ -199,11 +215,16 @@ impl SceneID {
         exclude_positions: &[usize],
     ) -> bool {
         // Find two modifiable positions not in exclude_positions
-        let modifiable = (0..14)
-            .filter(|i| !exclude_positions.contains(i))
-            .collect::<Vec<_>>();
+        let mut modifiable = [0usize; 14];
+        let mut mod_len = 0;
+        for i in 0..14 {
+            if !exclude_positions.contains(&i) {
+                modifiable[mod_len] = i;
+                mod_len += 1;
+            }
+        }
 
-        if modifiable.len() < 2 {
+        if mod_len < 2 {
             return false;
         }
         let pos_a = modifiable[0];
@@ -235,16 +256,17 @@ impl SceneID {
 }
 
 impl Display for SceneID {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.final_id)
     }
 }
 
 impl Display for SceneIDError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidUUID => write!(f, "Invalid UUID"),
             Self::InvalidCRC16 => write!(f, "Invalid CRC16"),
         }
     }
 }
+

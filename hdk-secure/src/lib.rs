@@ -1,4 +1,13 @@
+#![no_std]
 #![cfg_attr(feature = "simd", feature(portable_simd))]
+
+#[cfg(feature = "std")]
+extern crate std;
+
+#[cfg(test)]
+extern crate alloc;
+
+
 
 pub mod blowfish;
 pub mod hash;

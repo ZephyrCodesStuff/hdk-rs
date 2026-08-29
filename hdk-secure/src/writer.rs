@@ -1,34 +1,33 @@
+use binrw::io::{self, Write};
 use cipher::StreamCipher;
-use std::io::{self, Write};
 
-const DEFAULT_CAPACITY: usize = 4096;
+pub const DEFAULT_CHUNK_SIZE: usize = 1024;
 
 /// A writer that applies a stream cipher keystream to data before writing.
-pub struct CryptoWriter<W, C> {
+///
+/// The internal chunk size used for streaming keystream application is parameterized by `N` (defaults to 1024 bytes).
+pub struct CryptoWriter<W, C, const N: usize = DEFAULT_CHUNK_SIZE> {
     inner: W,
     cipher: C,
-    buf: Vec<u8>,
 }
 
-impl<W: Write, C: StreamCipher> CryptoWriter<W, C> {
-    /// Create a new `CryptoWriter` wrapping `inner` and using `cipher` to
-    /// transform bytes written through it.
-    ///
-    /// Uses a sensible default internal buffer capacity and delegates
-    /// to `with_capacity`.
+impl<W: Write, C: StreamCipher> CryptoWriter<W, C, DEFAULT_CHUNK_SIZE> {
+    /// Create a new `CryptoWriter` wrapping `inner` and using `cipher` with the default 1KB chunk size.
     pub fn new(inner: W, cipher: C) -> Self {
-        Self::with_capacity(inner, cipher, DEFAULT_CAPACITY)
+        Self::with_chunk_size(inner, cipher)
     }
 
-    /// Create a new `CryptoWriter` preallocating `initial_capacity` bytes for the
-    /// internal buffer. This can improve performance when the expected write
-    /// sizes are known in advance.
-    pub fn with_capacity(inner: W, cipher: C, initial_capacity: usize) -> Self {
-        Self {
-            inner,
-            cipher,
-            buf: Vec::with_capacity(initial_capacity),
-        }
+    /// Create a new `CryptoWriter`. The `_initial_capacity` parameter is ignored
+    /// as data is processed in stack-allocated chunks without heap allocation.
+    pub fn with_capacity(inner: W, cipher: C, _initial_capacity: usize) -> Self {
+        Self::new(inner, cipher)
+    }
+}
+
+impl<W: Write, C: StreamCipher, const N: usize> CryptoWriter<W, C, N> {
+    /// Create a new `CryptoWriter` with a custom chunk size `N`.
+    pub fn with_chunk_size(inner: W, cipher: C) -> Self {
+        Self { inner, cipher }
     }
 
     /// Consume this writer and return the inner writer.
@@ -37,18 +36,14 @@ impl<W: Write, C: StreamCipher> CryptoWriter<W, C> {
     }
 }
 
-impl<W: Write, C: StreamCipher> Write for CryptoWriter<W, C> {
+impl<W: Write, C: StreamCipher, const N: usize> Write for CryptoWriter<W, C, N> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // Reuse internal buffer to avoid per-write allocations.
-        self.buf.clear();
-        self.buf.reserve(buf.len());
-        self.buf.extend_from_slice(buf);
-
-        // Apply keystream in-place
-        self.cipher.apply_keystream(&mut self.buf);
-
-        // Write transformed data to inner writer
-        self.inner.write_all(&self.buf)?;
+        let mut chunk_buf = [0u8; N];
+        for chunk in buf.chunks(N) {
+            chunk_buf[..chunk.len()].copy_from_slice(chunk);
+            self.cipher.apply_keystream(&mut chunk_buf[..chunk.len()]);
+            self.inner.write_all(&chunk_buf[..chunk.len()])?;
+        }
         Ok(buf.len())
     }
 
@@ -56,3 +51,5 @@ impl<W: Write, C: StreamCipher> Write for CryptoWriter<W, C> {
         self.inner.flush()
     }
 }
+
+

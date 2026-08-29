@@ -1,31 +1,45 @@
+use binrw::io::{self, Read};
 use cipher::StreamCipher;
-use std::cmp;
-use std::io::{self, Read};
 
-// 8KB buffer (Aligns with 64-bit XTEA and 128-bit AES blocks perfectly)
-const BUF_SIZE: usize = 8192;
+pub const DEFAULT_BUF_SIZE: usize = 8192;
 
-pub struct CryptoReader<R, C> {
+/// A reader that decrypts data on the fly from an inner reader using a stream cipher.
+///
+/// The internal buffer size is parameterized by the const generic `N` (defaults to 8192 bytes).
+pub struct CryptoReader<R, C, const N: usize = DEFAULT_BUF_SIZE> {
     inner: R,
-    cipher: C,       // The dynamic cipher engine (XTEA, AES, etc.)
-    buffer: Vec<u8>, // Intermediate buffer for SIMD efficiency
+    cipher: C,              // The dynamic cipher engine (XTEA, AES, etc.)
+    buffer: [u8; N],        // Intermediate buffer for SIMD/block efficiency
     pos: usize,
     cap: usize,
 }
 
-impl<R: Read, C: StreamCipher> CryptoReader<R, C> {
+impl<R: Read, C: StreamCipher> CryptoReader<R, C, DEFAULT_BUF_SIZE> {
+    /// Create a new `CryptoReader` with the default 8KB buffer size.
     pub fn new(inner: R, cipher: C) -> Self {
+        Self::with_buf_size(inner, cipher)
+    }
+}
+
+impl<R: Read, C: StreamCipher, const N: usize> CryptoReader<R, C, N> {
+    /// Create a new `CryptoReader` with a custom buffer size `N`.
+    pub fn with_buf_size(inner: R, cipher: C) -> Self {
         Self {
             inner,
             cipher,
-            buffer: vec![0u8; BUF_SIZE],
+            buffer: [0u8; N],
             pos: 0,
             cap: 0,
         }
     }
+
+    /// Consume this reader and return the inner reader.
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
 }
 
-impl<R: Read, C: StreamCipher> Read for CryptoReader<R, C> {
+impl<R: Read, C: StreamCipher, const N: usize> Read for CryptoReader<R, C, N> {
     fn read(&mut self, out_buf: &mut [u8]) -> io::Result<usize> {
         // Refill buffer if empty
         if self.pos >= self.cap {
@@ -33,7 +47,7 @@ impl<R: Read, C: StreamCipher> Read for CryptoReader<R, C> {
             self.cap = 0;
 
             // Greedy read to fill the buffer
-            while self.cap < BUF_SIZE {
+            while self.cap < N {
                 let n = self.inner.read(&mut self.buffer[self.cap..])?;
                 if n == 0 {
                     break;
@@ -51,7 +65,7 @@ impl<R: Read, C: StreamCipher> Read for CryptoReader<R, C> {
 
         // Copy to output
         let remaining = self.cap - self.pos;
-        let to_copy = cmp::min(remaining, out_buf.len());
+        let to_copy = core::cmp::min(remaining, out_buf.len());
 
         out_buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
         self.pos += to_copy;
@@ -59,3 +73,4 @@ impl<R: Read, C: StreamCipher> Read for CryptoReader<R, C> {
         Ok(to_copy)
     }
 }
+

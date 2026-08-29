@@ -1,4 +1,5 @@
 use binrw::binrw;
+#[cfg(feature = "std")]
 use std::path::Path;
 
 #[binrw]
@@ -23,6 +24,7 @@ impl AfsHash {
     ///
     /// If the file name is already a valid uppercase hex hash, it will be used directly.
     /// Otherwise, the hash will be computed from the full path string.
+    #[cfg(feature = "std")]
     pub fn new_from_path(path: &Path) -> Self {
         let s = path.to_str().unwrap_or_default();
 
@@ -57,7 +59,7 @@ impl core::fmt::Display for AfsHash {
     }
 }
 
-pub fn afs_hash(data: std::str::Chars) -> i32 {
+pub fn afs_hash(data: core::str::Chars) -> i32 {
     let mut hash: i32 = 0;
 
     for mut c in data {

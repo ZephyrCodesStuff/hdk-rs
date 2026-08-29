@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod xtea_tests {
+    use alloc::vec;
     use cipher::generic_array::GenericArray;
     use cipher::{BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit};
 
@@ -120,6 +121,7 @@ mod xtea_tests {
 
 #[cfg(test)]
 mod blowfish_tests {
+    use alloc::{format, vec, vec::Vec};
     use crate::blowfish::Blowfish;
     use cipher::generic_array::GenericArray;
     use cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
@@ -457,6 +459,36 @@ mod blowfish_tests {
     }
 
     #[test]
+    fn crypto_reader_writer_custom_buf_sizes() {
+        use crate::blowfish::Blowfish;
+        use crate::reader::CryptoReader;
+        use crate::writer::CryptoWriter;
+        use cipher::generic_array::GenericArray;
+        use ctr::Ctr64BE;
+        use ctr::cipher::KeyIvInit;
+        use std::io::{Read, Write};
+
+        let key = GenericArray::from([0x55u8; 32]);
+        let iv = GenericArray::from([0x66u8; 8]);
+        let plaintext = b"Hello with custom 128-byte chunk writer and 256-byte reader!".to_vec();
+
+        let mut writer =
+            CryptoWriter::<_, _, 128>::with_chunk_size(Vec::new(), Ctr64BE::<Blowfish>::new(&key, &iv));
+        writer.write_all(&plaintext).unwrap();
+        writer.flush().unwrap();
+        let buf = writer.into_inner();
+
+        let cursor = std::io::Cursor::new(buf);
+        let mut reader =
+            CryptoReader::<_, _, 256>::with_buf_size(cursor, Ctr64BE::<Blowfish>::new(&key, &iv));
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).unwrap();
+
+        assert_eq!(out, plaintext);
+    }
+
+
+    #[test]
     fn test_xxtea_roundtrip_words() {
         use crate::xxtea::{Xxtea, PROFANITY_DICT_KEY};
 
@@ -509,4 +541,59 @@ mod blowfish_tests {
         cipher.decrypt_ps3_words(&mut words);
         assert_eq!(words, original);
     }
+
+    #[test]
+    fn test_xxtea_ps3_bytes_roundtrip() {
+        use crate::xxtea::{Xxtea, PROFANITY_DICT_KEY};
+
+        let cipher = Xxtea::new_from_words(PROFANITY_DICT_KEY);
+        let mut data = vec![0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x02, 0x0D, 0x00, 0x00, 0x27, 0x23];
+        let original = data.clone();
+
+        cipher.encrypt_ps3_bytes(&mut data).unwrap();
+        assert_ne!(data, original);
+
+        cipher.decrypt_ps3_bytes(&mut data).unwrap();
+        assert_eq!(data, original);
+    }
 }
+
+
+#[cfg(test)]
+mod sceneid_tests {
+    use crate::sceneid::SceneID;
+
+    #[test]
+    fn test_scene_id_new_and_verify() {
+        let scene_id = SceneID::new();
+        let verified = SceneID::verify(scene_id.final_id.as_bytes()).expect("Verification should succeed");
+        assert_eq!(scene_id, verified);
+        let id_u16 = scene_id.extract_scene_id();
+        assert_eq!(id_u16, verified.extract_scene_id());
+    }
+
+    #[test]
+    fn test_scene_id_forge() {
+        let target: u16 = 0x1337;
+        let forged = SceneID::forge(target, None);
+        assert_eq!(forged.extract_scene_id(), target);
+        let verified = SceneID::verify(forged.final_id.as_bytes()).expect("Forged SceneID must pass verification");
+        assert_eq!(forged, verified);
+    }
+}
+
+#[cfg(test)]
+mod hash_tests {
+    use crate::hash::{AfsHash, afs_hash};
+
+    #[test]
+    fn test_afs_hash() {
+        let h1 = AfsHash::new_from_str("Objects/test.bar");
+        let h2 = afs_hash("Objects/test.bar".chars());
+        assert_eq!(h1.0, h2);
+        assert!(AfsHash::is_valid_hash_str("1234ABCD"));
+        assert!(!AfsHash::is_valid_hash_str("1234abcd"));
+        assert!(!AfsHash::is_valid_hash_str("1234"));
+    }
+}
+

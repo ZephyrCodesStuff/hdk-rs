@@ -2,13 +2,13 @@
 //!
 //! A PS3 `.pkg` file has the following high-level layout:
 //!
-//! | Region           | Offset          | Notes                              |
-//! |------------------|-----------------|------------------------------------|
-//! | Main header      | `0x00`–`0xBF`   | Always plaintext                   |
-//! | Metadata (TLV)   | `0xC0`–variable | Always plaintext, id/size/payload  |
-//! | File entry table | `data_offset`   | Encrypted for retail, plain debug  |
-//! | File names       | (relative)      | Encrypted for retail, plain debug  |
-//! | File data        | (relative)      | Encrypted for retail, plain debug  |
+//! | Region           | Offset          | Notes                                      |
+//! |------------------|-----------------|--------------------------------------------|
+//! | Main header      | `0x00`–`0xBF`   | Header plus mode-specific authentication   |
+//! | Metadata         | `0xC0`–variable | Fixed record for debug, TLV for retail     |
+//! | File entry table | `data_offset`   | SHA-1 stream (debug) or AES-CTR (retail)   |
+//! | File names       | (relative)      | Encrypted with the selected package mode   |
+//! | File data        | (relative)      | Encrypted with the selected package mode   |
 
 use core::fmt;
 
@@ -232,7 +232,7 @@ impl TryFrom<u32> for PkgEntryType {
 /// 0x30  [u8;48]  content_id  (null-padded ASCII)
 /// 0x60  [u8;16]  qa_digest   (SHA-1 key material for debug crypto)
 /// 0x70  [u8;16]  klicensee   (AES-CTR initial counter)
-/// 0x80  [u8;64]  header_digest
+/// 0x80  [u8;64]  mode-specific header authentication
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PkgHeader {

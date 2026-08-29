@@ -16,14 +16,14 @@ pub struct CryptoReader<R, C, const N: usize = DEFAULT_BUF_SIZE> {
 
 impl<R: Read, C: StreamCipher> CryptoReader<R, C, DEFAULT_BUF_SIZE> {
     /// Create a new `CryptoReader` with the default 8KB buffer size.
-    pub fn new(inner: R, cipher: C) -> Self {
+    pub const fn new(inner: R, cipher: C) -> Self {
         Self::with_buf_size(inner, cipher)
     }
 }
 
 impl<R: Read, C: StreamCipher, const N: usize> CryptoReader<R, C, N> {
     /// Create a new `CryptoReader` with a custom buffer size `N`.
-    pub fn with_buf_size(inner: R, cipher: C) -> Self {
+    pub const fn with_buf_size(inner: R, cipher: C) -> Self {
         Self {
             inner,
             cipher,

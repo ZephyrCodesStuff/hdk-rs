@@ -13,20 +13,20 @@ pub struct CryptoWriter<W, C, const N: usize = DEFAULT_CHUNK_SIZE> {
 
 impl<W: Write, C: StreamCipher> CryptoWriter<W, C, DEFAULT_CHUNK_SIZE> {
     /// Create a new `CryptoWriter` wrapping `inner` and using `cipher` with the default 1KB chunk size.
-    pub fn new(inner: W, cipher: C) -> Self {
+    pub const fn new(inner: W, cipher: C) -> Self {
         Self::with_chunk_size(inner, cipher)
     }
 
     /// Create a new `CryptoWriter`. The `_initial_capacity` parameter is ignored
     /// as data is processed in stack-allocated chunks without heap allocation.
-    pub fn with_capacity(inner: W, cipher: C, _initial_capacity: usize) -> Self {
+    pub const fn with_capacity(inner: W, cipher: C, _initial_capacity: usize) -> Self {
         Self::new(inner, cipher)
     }
 }
 
 impl<W: Write, C: StreamCipher, const N: usize> CryptoWriter<W, C, N> {
     /// Create a new `CryptoWriter` with a custom chunk size `N`.
-    pub fn with_chunk_size(inner: W, cipher: C) -> Self {
+    pub const fn with_chunk_size(inner: W, cipher: C) -> Self {
         Self { inner, cipher }
     }
 

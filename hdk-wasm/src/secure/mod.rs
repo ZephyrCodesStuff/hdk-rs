@@ -1,4 +1,4 @@
-use hdk_secure::modes::{BlowfishEcbDec, BlowfishPS3, XteaPS3};
+use hdk_secure::modes::{BlowfishPS3, XteaPS3};
 use wasm_bindgen::prelude::*;
 
 use cipher::{KeyIvInit, KeySizeUser, StreamCipher};
@@ -88,14 +88,20 @@ pub fn blowfish_recover_iv(
     }
 
     // Step 2: ECB-decrypt the block to get the raw IV.
-    use ctr::cipher::{BlockDecryptMut, KeyInit, block_padding::NoPadding};
-    let ecb_cipher = BlowfishEcbDec::new_from_slice(key)
-        .map_err(|e| JsValue::from_str(&format!("Failed to create ECB cipher: {e}")))?;
-
-    let mut block = ecb_iv;
-    ecb_cipher
-        .decrypt_padded_mut::<NoPadding>(&mut block)
-        .map_err(|e| JsValue::from_str(&format!("ECB decrypt failed: {e}")))?;
+    use cipher::{BlockDecrypt, KeyInit};
+    let cipher = hdk_secure::blowfish::Blowfish::new(GenericArray::from_slice(key));
+    let mut block = GenericArray::clone_from_slice(&ecb_iv);
+    cipher.decrypt_block(&mut block);
 
     Ok(block.to_vec())
+}
+
+/// Extracts the numeric 16-bit SceneID from a PlayStation Home UUID string.
+///
+/// Example: "b25368df-679c-05af-0210-c279244d9b65" -> 6000
+#[wasm_bindgen]
+pub fn scene_id_extract(scene_uuid_str: &str) -> Result<u16, JsValue> {
+    let scene_id = hdk_secure::sceneid::SceneID::verify_str(scene_uuid_str)
+        .map_err(|e| JsValue::from_str(&format!("Invalid SceneID UUID: {e}")))?;
+    Ok(scene_id.extract_scene_id())
 }
